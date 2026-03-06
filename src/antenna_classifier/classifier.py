@@ -89,7 +89,6 @@ def classify(parsed: ParseResult) -> ClassificationResult:
     # Run classifiers in priority order — first high-confidence match wins
     classifiers = [
         _classify_from_comments,
-        _classify_from_path,
         _classify_helix,
         _classify_patch,
         _classify_loop_quad,
@@ -336,25 +335,6 @@ def _classify_from_comments(ctx: _AnalysisContext, result: ClassificationResult)
                 result.antenna_type = atype
                 result.confidence = max(result.confidence, 0.8)
                 result.evidence.append(f"comment contains '{kw}'")
-                return
-
-
-def _classify_from_path(ctx: _AnalysisContext, result: ClassificationResult) -> None:
-    """Match antenna type from the filename."""
-    if result.confidence >= 0.7:
-        return
-    name = Path(ctx.source_path).stem.lower().replace("_", " ").replace("-", " ")
-    for atype, keywords, excludes in _KEYWORD_MAP:
-        if any(kw in name for kw in excludes):
-            continue
-        for kw in keywords:
-            if kw in name:
-                if result.antenna_type == "unknown":
-                    result.antenna_type = atype
-                    result.confidence = max(result.confidence, 0.5)
-                elif result.antenna_type == atype:
-                    result.confidence = min(result.confidence + 0.1, 1.0)
-                result.evidence.append(f"filename contains '{kw}'")
                 return
 
 
