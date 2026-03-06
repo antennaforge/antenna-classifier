@@ -64,6 +64,17 @@ def main(argv: list[str] | None = None) -> int:
     p_dash.add_argument("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
     p_dash.add_argument("--solver-url", default=None, help="NEC solver URL (default: http://localhost:8787)")
 
+    # --- export ---
+    p_export = sub.add_parser("export", help="Export valid files into a directory tree organized by type")
+    p_export.add_argument("directory", type=Path, help="Directory to scan (recursive)")
+    p_export.add_argument("output", type=Path, help="Output directory")
+    p_export.add_argument("--valid-only", action="store_true", default=True, help="Only export valid files (default)")
+    p_export.add_argument("--all", dest="valid_only", action="store_false", help="Export all files including invalid")
+    p_export.add_argument("--min-confidence", type=float, default=0.0, help="Min classification confidence")
+    p_export.add_argument("--type", dest="filter_type", help="Export only this antenna type")
+    p_export.add_argument("--copy", dest="use_copy", action="store_true", default=True, help="Copy files (default)")
+    p_export.add_argument("--symlink", dest="use_copy", action="store_false", help="Create symlinks instead of copies")
+
     args = ap.parse_args(argv)
 
     if args.command == "scan":
@@ -78,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_similar(args)
     elif args.command == "dashboard":
         return _cmd_dashboard(args)
+    elif args.command == "export":
+        return _cmd_export(args)
     else:
         ap.print_help()
         return 1
@@ -370,6 +383,72 @@ def _cmd_dashboard(args) -> int:
         host=args.host,
         solver_url=args.solver_url,
     )
+    return 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Export valid NEC files into a directory tree organized by antenna type."""
+    import shutil
+
+    directory = args.directory
+    output = args.output
+
+    if not directory.is_dir():
+        print(f"Not a directory: {directory}", file=sys.stderr)
+        return 1
+
+    files = _collect_nec_files(directory)
+    if not files:
+        print(f"No .nec files found in {directory}")
+        return 0
+
+    output.mkdir(parents=True, exist_ok=True)
+
+    exported = 0
+    skipped = 0
+    type_counts: dict[str, int] = {}
+
+    for path in files:
+        result = _process_file(path)
+
+        if args.valid_only and not result["valid"]:
+            skipped += 1
+            continue
+        if result["confidence"] < args.min_confidence:
+            skipped += 1
+            continue
+        if args.filter_type and result["antenna_type"] != args.filter_type:
+            skipped += 1
+            continue
+
+        atype = result["antenna_type"]
+        type_dir = output / atype
+        type_dir.mkdir(exist_ok=True)
+
+        dest = type_dir / path.name
+        # Handle name collisions
+        if dest.exists():
+            stem = path.stem
+            suffix = path.suffix
+            i = 1
+            while dest.exists():
+                dest = type_dir / f"{stem}_{i}{suffix}"
+                i += 1
+
+        if args.use_copy:
+            shutil.copy2(path, dest)
+        else:
+            dest.symlink_to(path.resolve())
+
+        exported += 1
+        type_counts[atype] = type_counts.get(atype, 0) + 1
+
+    print(f"\nExported {exported} files to {output} (skipped {skipped})")
+    if type_counts:
+        print(f"\n  By type:")
+        for atype, count in sorted(type_counts.items(), key=lambda x: -x[1]):
+            print(f"    {atype:<24} {count}")
+    print()
     return 0
 
 

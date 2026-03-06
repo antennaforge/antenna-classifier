@@ -59,6 +59,8 @@ class ClassificationResult:
     evidence: list[str] = field(default_factory=list)
     frequency_mhz: float | None = None
     band: str | None = None
+    bands: list[str] = field(default_factory=list)
+    is_multiband: bool = False
     element_count: int = 0
     ground_type: str = "free_space"
 
@@ -112,6 +114,9 @@ def classify(parsed: ParseResult) -> ClassificationResult:
     # If still unknown, check for wire-grid objects (no EX/FR cards)
     if result.antenna_type == "unknown":
         _classify_wire_object(ctx, result)
+
+    # Multiband detection — check if frequencies span multiple bands
+    _detect_multiband(ctx, result)
 
     return result
 
@@ -243,6 +248,7 @@ class _AnalysisContext:
         self.has_tl: bool = False
         self.has_helix: bool = False
         self.has_surface_patch: bool = False
+        self.all_frequencies: list[float] = []
         self.comment_text: str = ""
         self.source_path: str = parsed.source
 
@@ -259,14 +265,26 @@ class _AnalysisContext:
         self.wire_groups = [_WireGroup(tag=t, wires=ws) for t, ws in sorted(tag_map.items())]
         self.n_wire_groups = len(self.wire_groups)
 
-        # Frequency
+        # Frequency — collect all FR entries
         for card in self.parsed.cards:
             if card.card_type == "FR":
                 freq = card.labeled_params.get("freq")
+                n_freq = card.labeled_params.get("nFreq")
+                freq_step = card.labeled_params.get("freqStep")
+                freq_type = card.labeled_params.get("freqType")
                 if isinstance(freq, (int, float)) and freq > 0:
-                    self.frequency = float(freq)
-                    self.wavelength = 299.792458 / self.frequency  # meters
-                    break
+                    f = float(freq)
+                    if self.frequency is None:
+                        self.frequency = f
+                        self.wavelength = 299.792458 / f
+                    self.all_frequencies.append(f)
+                    # Expand frequency sweep steps
+                    if isinstance(n_freq, int) and n_freq > 1 and isinstance(freq_step, (int, float)) and freq_step > 0:
+                        for i in range(1, n_freq):
+                            if isinstance(freq_type, int) and freq_type == 1:
+                                self.all_frequencies.append(f * (freq_step ** i))
+                            else:
+                                self.all_frequencies.append(f + freq_step * i)
 
         # Ground
         for card in self.parsed.cards:
@@ -719,6 +737,33 @@ def _classify_dipole(ctx: _AnalysisContext, result: ClassificationResult) -> Non
             result.antenna_type = "dipole"
             result.confidence = max(result.confidence, 0.5)
             result.evidence.append("1-2 horizontal elements, simple feed")
+        elif any(g.is_primarily_vertical for g in excited) and not ctx.has_ground:
+            result.antenna_type = "dipole"
+            result.confidence = max(result.confidence, 0.4)
+            result.evidence.append("vertical element without ground (vertical dipole)")
+
+
+# ---------------------------------------------------------------------------
+# Multiband detection
+# ---------------------------------------------------------------------------
+
+def _detect_multiband(ctx: _AnalysisContext, result: ClassificationResult) -> None:
+    """Detect if the model covers multiple amateur bands."""
+    if not ctx.all_frequencies:
+        return
+
+    # Collect unique bands from all frequencies
+    seen_bands: list[str] = []
+    for f in ctx.all_frequencies:
+        b = _freq_to_band(f)
+        if b and b not in seen_bands:
+            seen_bands.append(b)
+
+    result.bands = seen_bands
+    result.is_multiband = len(seen_bands) >= 2
+    if result.is_multiband:
+        result.subtypes.append("multiband")
+        result.evidence.append(f"frequencies span {len(seen_bands)} bands: {', '.join(seen_bands)}")
 
 
 # ---------------------------------------------------------------------------

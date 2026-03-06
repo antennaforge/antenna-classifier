@@ -144,6 +144,25 @@ CARD_SPECS: dict[str, list[tuple[str, type, bool]]] = {
     "KH": [  # Interaction approximation
         ("approx", float, True),
     ],
+    # NEC-4 specific cards
+    "GD": [  # Additional ground parameters (NEC-4)
+        ("epsr", float, True), ("sigma", float, True),
+        ("dist1", float, False), ("dist2", float, False),
+    ],
+    "IS": [  # Insulated wire (NEC-4)
+        ("tag", int, True), ("segStart", int, True), ("segEnd", int, True),
+        ("radius", float, True), ("permittivity", float, False),
+        ("conductivity", float, False),
+    ],
+    "NX": [  # Next structure (NEC-4)
+    ],
+    "UM": [  # Update maximum coupling (NEC-4)
+        ("i1", int, True), ("i2", int, True),
+        ("f1", float, False), ("f2", float, False), ("f3", float, False),
+    ],
+    "PL": [  # Plot flags (NEC-4)
+        ("i1", int, False), ("i2", int, False), ("i3", int, False), ("i4", int, False),
+    ],
 }
 
 _SY_RE = re.compile(r"^\s*SY\b", re.IGNORECASE)
