@@ -1,0 +1,240 @@
+"""
+CLI entry point for antenna-classifier.
+
+Usage:
+    antenna-classifier scan <directory>       Scan NEC files, validate, classify, report
+    antenna-classifier check <file.nec>       Parse + validate + classify a single file
+    antenna-classifier report <directory>      Generate a JSON/CSV catalog of all NEC files
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import sys
+from pathlib import Path
+
+from . import classifier, parser, validator
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="antenna-classifier",
+        description="NEC file parser, validator, and antenna type classifier",
+    )
+    sub = ap.add_subparsers(dest="command")
+
+    # --- scan ---
+    p_scan = sub.add_parser("scan", help="Scan a directory of NEC files")
+    p_scan.add_argument("directory", type=Path, help="Directory to scan (recursive)")
+    p_scan.add_argument("--valid-only", action="store_true", help="Only show valid files")
+    p_scan.add_argument("--type", dest="filter_type", help="Filter by antenna type")
+    p_scan.add_argument("--min-confidence", type=float, default=0.0, help="Min classification confidence")
+
+    # --- check ---
+    p_check = sub.add_parser("check", help="Check a single NEC file")
+    p_check.add_argument("file", type=Path, help="NEC file to check")
+
+    # --- report ---
+    p_report = sub.add_parser("report", help="Generate catalog report")
+    p_report.add_argument("directory", type=Path, help="Directory to scan (recursive)")
+    p_report.add_argument("--format", choices=["json", "csv"], default="json", help="Output format")
+    p_report.add_argument("--output", "-o", type=Path, help="Output file (default: stdout)")
+
+    args = ap.parse_args(argv)
+
+    if args.command == "scan":
+        return _cmd_scan(args)
+    elif args.command == "check":
+        return _cmd_check(args)
+    elif args.command == "report":
+        return _cmd_report(args)
+    else:
+        ap.print_help()
+        return 1
+
+
+def _collect_nec_files(directory: Path) -> list[Path]:
+    """Recursively find all .nec files."""
+    return sorted(directory.rglob("*.nec"))
+
+
+def _process_file(path: Path) -> dict:
+    """Parse, validate, classify a single file. Returns a summary dict."""
+    parsed = parser.parse_file(path)
+    val = validator.validate(parsed)
+    cls = classifier.classify(parsed)
+    return {
+        "path": str(path),
+        "filename": path.name,
+        "valid": val.valid,
+        "errors": len(val.errors),
+        "warnings": len(val.warnings),
+        "antenna_type": cls.antenna_type,
+        "confidence": round(cls.confidence, 2),
+        "subtypes": cls.subtypes,
+        "evidence": cls.evidence,
+        "frequency_mhz": cls.frequency_mhz,
+        "band": cls.band,
+        "element_count": cls.element_count,
+        "ground_type": cls.ground_type,
+        "wire_count": len(parsed.wire_cards),
+        "card_count": len(parsed.cards),
+        "validation_issues": [
+            {"severity": i.severity.value, "message": i.message, "line": i.line}
+            for i in val.issues
+        ],
+    }
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    path = args.file
+    if not path.exists():
+        print(f"File not found: {path}", file=sys.stderr)
+        return 1
+
+    result = _process_file(path)
+    parsed = parser.parse_file(path)
+
+    # Header
+    print(f"\n{'=' * 70}")
+    print(f"  NEC File: {path.name}")
+    print(f"{'=' * 70}")
+
+    # Classification
+    cls = classifier.classify(parsed)
+    status = "VALID" if result["valid"] else "INVALID"
+    print(f"  Status:     {status}")
+    print(f"  Type:       {cls.label}")
+    print(f"  Confidence: {result['confidence']:.0%}")
+    if cls.frequency_mhz:
+        print(f"  Frequency:  {cls.frequency_mhz} MHz ({cls.band or 'unknown band'})")
+    print(f"  Elements:   {result['element_count']} wire group(s), {result['wire_count']} GW card(s)")
+    print(f"  Ground:     {result['ground_type']}")
+
+    # Evidence
+    if cls.evidence:
+        print(f"\n  Classification evidence:")
+        for ev in cls.evidence:
+            print(f"    - {ev}")
+
+    # Validation
+    val = validator.validate(parsed)
+    if val.issues:
+        print(f"\n  Validation ({len(val.errors)} error(s), {len(val.warnings)} warning(s)):")
+        for issue in val.issues:
+            icon = "X" if issue.severity.value == "error" else ("!" if issue.severity.value == "warning" else "i")
+            loc = f" (line {issue.line})" if issue.line else ""
+            print(f"    [{icon}] {issue.message}{loc}")
+
+    print()
+    return 0 if result["valid"] else 1
+
+
+def _cmd_scan(args: argparse.Namespace) -> int:
+    directory = args.directory
+    if not directory.is_dir():
+        print(f"Not a directory: {directory}", file=sys.stderr)
+        return 1
+
+    files = _collect_nec_files(directory)
+    if not files:
+        print(f"No .nec files found in {directory}")
+        return 0
+
+    total = len(files)
+    valid_count = 0
+    invalid_count = 0
+    type_counts: dict[str, int] = {}
+
+    print(f"\nScanning {total} NEC files in {directory}\n")
+    print(f"{'Status':<8} {'Type':<20} {'Conf':>5} {'Freq':>10} {'Band':<8} {'File'}")
+    print("-" * 90)
+
+    for path in files:
+        result = _process_file(path)
+
+        if args.valid_only and not result["valid"]:
+            continue
+        if args.filter_type and result["antenna_type"] != args.filter_type:
+            continue
+        if result["confidence"] < args.min_confidence:
+            continue
+
+        status = "OK" if result["valid"] else "FAIL"
+        freq_str = f"{result['frequency_mhz']:.1f}" if result["frequency_mhz"] else "-"
+        band_str = result["band"] or "-"
+        rel_path = path.relative_to(directory) if path.is_relative_to(directory) else path.name
+
+        print(f"{status:<8} {result['antenna_type']:<20} {result['confidence']:>5.0%} {freq_str:>10} {band_str:<8} {rel_path}")
+
+        if result["valid"]:
+            valid_count += 1
+        else:
+            invalid_count += 1
+        type_counts[result["antenna_type"]] = type_counts.get(result["antenna_type"], 0) + 1
+
+    # Summary
+    shown = valid_count + invalid_count
+    print(f"\n{'=' * 90}")
+    print(f"  Total: {total} files | Shown: {shown} | Valid: {valid_count} | Invalid: {invalid_count}")
+    print(f"\n  Types found:")
+    for atype, count in sorted(type_counts.items(), key=lambda x: -x[1]):
+        print(f"    {atype:<24} {count}")
+    print()
+
+    return 0
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    directory = args.directory
+    if not directory.is_dir():
+        print(f"Not a directory: {directory}", file=sys.stderr)
+        return 1
+
+    files = _collect_nec_files(directory)
+    if not files:
+        print(f"No .nec files found in {directory}", file=sys.stderr)
+        return 0
+
+    records = []
+    for path in files:
+        result = _process_file(path)
+        # Simplify for catalog output
+        records.append({
+            "filename": result["filename"],
+            "path": result["path"],
+            "valid": result["valid"],
+            "antenna_type": result["antenna_type"],
+            "confidence": result["confidence"],
+            "frequency_mhz": result["frequency_mhz"],
+            "band": result["band"],
+            "element_count": result["element_count"],
+            "wire_count": result["wire_count"],
+            "ground_type": result["ground_type"],
+            "errors": result["errors"],
+            "warnings": result["warnings"],
+            "evidence": "; ".join(result["evidence"]),
+        })
+
+    out = args.output.open("w") if args.output else sys.stdout
+
+    if args.format == "json":
+        json.dump(records, out, indent=2)
+        out.write("\n")
+    else:  # csv
+        fieldnames = list(records[0].keys())
+        writer = csv.DictWriter(out, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(records)
+
+    if args.output:
+        out.close()
+        print(f"Report written to {args.output} ({len(records)} files)", file=sys.stderr)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
