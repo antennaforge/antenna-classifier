@@ -113,10 +113,6 @@ def classify(parsed: ParseResult) -> ClassificationResult:
     if result.antenna_type == "unknown":
         _classify_wire_object(ctx, result)
 
-    # Last-resort from directory hints
-    if result.antenna_type == "unknown":
-        _classify_from_directory(ctx, result)
-
     return result
 
 
@@ -360,40 +356,6 @@ def _classify_from_path(ctx: _AnalysisContext, result: ClassificationResult) -> 
                     result.confidence = min(result.confidence + 0.1, 1.0)
                 result.evidence.append(f"filename contains '{kw}'")
                 return
-
-
-def _classify_from_directory(ctx: _AnalysisContext, result: ClassificationResult) -> None:
-    """Last-resort: infer from parent directory name."""
-    parent = Path(ctx.source_path).parent.name.lower().replace("-", " ").replace("_", " ")
-    dir_map = {
-        "yagis hf": "yagi", "yagis": "yagi",
-        "verticals": "vertical",
-        "lpdas": "lpda",
-        "quads": "quad",
-        "phased arrays": "phased_array",
-        "wire arrays": "wire_array",
-        "vhf uhf": "yagi",
-        "hfbeams": "yagi",
-        "vhfbeams": "yagi",
-        "hfsimple": "dipole",
-        "vhfsimple": "dipole",
-        "hfvertical": "vertical",
-        "lfvertical": "vertical",
-        "hfcollinear": "collinear",
-        "hfmultiband": "dipole",
-        "vhfmultiband": "dipole",
-        "hfshort": "dipole",
-        "hfactivefeed": "dipole",
-        "aperiodic": "beverage",
-        "fractals": "fractal",
-        "spatch": "patch",
-        "objects": "wire_object",
-        "stacks": "phased_array",
-    }
-    if parent in dir_map:
-        result.antenna_type = dir_map[parent]
-        result.confidence = max(result.confidence, 0.3)
-        result.evidence.append(f"directory '{parent}' suggests {dir_map[parent]}")
 
 
 def _classify_helix(ctx: _AnalysisContext, result: ClassificationResult) -> None:
