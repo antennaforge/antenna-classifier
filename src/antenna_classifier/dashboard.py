@@ -41,8 +41,13 @@ def create_app(
 
     nec_dir = Path(nec_dir or os.getenv("NEC_DIR", "."))
     solver_url = solver_url or os.getenv("NEC_SOLVER_URL", DEFAULT_SOLVER_URL)
+    root_path = os.getenv("ROOT_PATH", "")
 
-    app = FastAPI(title="Antenna Classifier Dashboard", version="0.3.0")
+    app = FastAPI(
+        title="Antenna Classifier Dashboard",
+        version="0.3.0",
+        root_path=root_path,
+    )
 
     # ---- Static files (frontend) ----
     static_dir = Path(__file__).parent / "static"

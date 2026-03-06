@@ -10,6 +10,8 @@ services:
       - "${NEC_SOLVER_PORT:-8787}:8787"
     environment:
       - NEC_BIN=${NEC_BIN:-nec2c}
+    networks:
+      - default
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8787/healthz').read()\""]
       interval: 30s
@@ -26,9 +28,17 @@ services:
       - "${DASHBOARD_PORT:-8501}:8501"
     environment:
       - NEC_DIR=/data/nec_files
-      - NEC_SOLVER_URL=http://nec-solver:8787
+      - NEC_SOLVER_URL=http://ac-nec-solver:8787
+      - ROOT_PATH=/antenna
     volumes:
       - ${NEC_FILES_DIR:-./nec_files}:/data/nec_files:ro
+    networks:
+      - default
+      - hamfeeds_wspr_network
     depends_on:
       nec-solver:
         condition: service_healthy
+
+networks:
+  hamfeeds_wspr_network:
+    external: true

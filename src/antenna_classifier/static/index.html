@@ -182,6 +182,8 @@ a { color: var(--accent); text-decoration: none; }
 
 <script>
 // ---- State ----
+// Derive base URL from where the page is served (handles reverse proxy path prefixes)
+const BASE_URL = window.location.pathname.replace(/\/$/, '');
 let catalog = [];
 let summary = {};
 let activeFile = null;
@@ -189,8 +191,8 @@ let activeFile = null;
 // ---- Boot ----
 document.addEventListener('DOMContentLoaded', async () => {
   const [catResp, sumResp] = await Promise.all([
-    fetch('/api/catalog').then(r => r.json()),
-    fetch('/api/summary').then(r => r.json()),
+    fetch(`${BASE_URL}/api/catalog`).then(r => r.json()),
+    fetch(`${BASE_URL}/api/summary`).then(r => r.json()),
   ]);
   catalog = catResp.files || [];
   summary = sumResp;
@@ -318,7 +320,7 @@ async function selectFile(filename) {
   dv.style.display = 'block';
   dv.innerHTML = '<div style="padding:40px;text-align:center;"><div class="spinner"></div> Loading...</div>';
 
-  const data = await fetch(`/api/file/${encodeURIComponent(filename)}`).then(r => r.json());
+  const data = await fetch(`${BASE_URL}/api/file/${encodeURIComponent(filename)}`).then(r => r.json());
   renderDetail(data);
 }
 
@@ -422,7 +424,7 @@ async function runSimulation(filename) {
   results.innerHTML = '';
 
   try {
-    const resp = await fetch(`/api/simulate/${encodeURIComponent(filename)}`, { method: 'POST' });
+    const resp = await fetch(`${BASE_URL}/api/simulate/${encodeURIComponent(filename)}`, { method: 'POST' });
     const data = await resp.json();
     btn.disabled = false;
     status.textContent = '';
