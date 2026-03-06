@@ -1,51 +1,531 @@
 from fastapi import FastAPI, Body
+import ast as _ast
 import tempfile, subprocess, shlex, re, json, os, time, hashlib, math
 
 # Allow selecting solver binary via environment (nec2c, nec2++, xnec2c). Default nec2c.
 NEC_BIN = os.getenv("NEC_BIN", "nec2c")
 
+# Engineering notation suffixes used by xnec2c / 4nec2
+_ENG_SUFFIXES = {
+    "T": 1e12, "G": 1e9, "M": 1e6, "k": 1e3, "K": 1e3,
+    "m": 1e-3, "u": 1e-6, "µ": 1e-6, "n": 1e-9, "p": 1e-12, "f": 1e-15,
+}
+# Unit labels that follow a suffix (optional, stripped after multiplier applied)
+_ENG_UNITS = {"H", "F", "Hz", "Ohm", "V", "A", "W", "S", "m"}
+
+_ENG_RE = re.compile(
+    r'^([\d.Ee+\-]+)\s*([TGMkKmuµnpf])([A-Za-z]*)$'
+)
+
+def _parse_eng(token: str) -> str | None:
+    """Parse engineering notation like 5.8pF, 1.22uH, 26.3pF -> plain float string.
+    Returns None if not engineering notation."""
+    m = _ENG_RE.match(token.strip())
+    if not m:
+        return None
+    try:
+        value = float(m.group(1))
+    except ValueError:
+        return None
+    prefix = m.group(2)
+    if prefix not in _ENG_SUFFIXES:
+        return None
+    return _fmt_float(value * _ENG_SUFFIXES[prefix])
+
+def _fmt_float(v) -> str:
+    """Format a numeric value for NEC deck output.
+    
+    nec2c uses fixed-width column parsing; long decimal strings overflow fields.
+    Use 7 significant digits (sub-micron accuracy, fits in nec2c columns).
+    """
+    if isinstance(v, int):
+        return str(v)
+    # Use 7 significant digits, strip trailing zeros
+    return f"{v:.7g}"
+
 app = FastAPI(title="NEC Solver API", version="1.0")
+
+# ---------------------------------------------------------------------------
+# SY variable resolution (ported from antenna-agent-model nec_parser.py)
+# ---------------------------------------------------------------------------
+_SY_RE = re.compile(r'^\s*SY\b', re.IGNORECASE)
+
+def _safe_eval(expr: str, vars_dict: dict) -> float | int:
+    """Evaluate a numeric expression using AST.
+
+    Supports: +, -, *, /, **, ^ (as power), parens, symbol refs,
+    function calls (LOG, LN, SQRT, SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, ABS, EXP, LOG10),
+    and xnec2c built-in constants (mm, in, ft, pi).
+    """
+    # xnec2c built-in constants
+    _BUILTINS = {
+        "mm": 0.001,
+        "in": 0.0254,
+        "ft": 0.3048,
+        "pi": math.pi,
+        "PI": math.pi,
+    }
+
+    # NEC uses ^ for exponentiation; Python uses ** — rewrite before AST parse.
+    prepared = expr.strip().replace("^", "**")
+    node = _ast.parse(prepared, mode='eval').body
+
+    # Allowed math functions
+    _FUNCS = {
+        "LOG": math.log,
+        "LN": math.log,
+        "LOG10": math.log10,
+        "SQRT": math.sqrt,
+        "SIN": math.sin,
+        "COS": math.cos,
+        "TAN": math.tan,
+        "ASIN": math.asin,
+        "ACOS": math.acos,
+        "ATAN": math.atan,
+        "ABS": abs,
+        "EXP": math.exp,
+        "INT": lambda x: int(x),
+        "SQR": math.sqrt,
+    }
+    _FUNCS2 = {
+        "ATAN2": math.atan2,
+    }
+
+    def _ev(n):
+        if isinstance(n, _ast.BinOp):
+            l, r = _ev(n.left), _ev(n.right)
+            if isinstance(n.op, _ast.Add):    return l + r
+            if isinstance(n.op, _ast.Sub):    return l - r
+            if isinstance(n.op, _ast.Mult):   return l * r
+            if isinstance(n.op, _ast.Div):    return l / r
+            if isinstance(n.op, _ast.Pow):    return l ** r
+            if isinstance(n.op, _ast.BitXor): return l ** r  # fallback for ^
+            raise ValueError(f"unsupported op {n.op}")
+        if isinstance(n, _ast.UnaryOp):
+            v = _ev(n.operand)
+            if isinstance(n.op, _ast.UAdd): return +v
+            if isinstance(n.op, _ast.USub): return -v
+            raise ValueError(f"unsupported unary {n.op}")
+        if isinstance(n, _ast.Constant) and isinstance(n.value, (int, float)):
+            return n.value
+        if isinstance(n, _ast.Name):
+            # Case-insensitive lookup: vars_dict keys are lowercased
+            low = n.id.lower()
+            if low in vars_dict:
+                return vars_dict[low]
+            if n.id in vars_dict:
+                return vars_dict[n.id]
+            if n.id in _BUILTINS:
+                return _BUILTINS[n.id]
+            upper = n.id.upper()
+            if upper in _BUILTINS:
+                return _BUILTINS[upper]
+            raise ValueError(f"unknown var {n.id!r}")
+        if isinstance(n, _ast.Call):
+            fname = n.func.id.upper() if isinstance(n.func, _ast.Name) else ""
+            args = [_ev(a) for a in n.args]
+            if fname in _FUNCS and len(args) == 1:
+                return _FUNCS[fname](args[0])
+            if fname in _FUNCS2 and len(args) == 2:
+                return _FUNCS2[fname](args[0], args[1])
+            raise ValueError(f"unsupported func {fname}")
+        raise ValueError(f"unsupported node {n!r}")
+
+    return _ev(node)
+
+
+# AWG wire gauge lookup (diameter in inches) — from enhanced_nec_parser.py
+_AWG = {
+    "#0": 0.3249, "#1": 0.2893, "#2": 0.2576, "#3": 0.2294,
+    "#4": 0.2043, "#6": 0.1620, "#8": 0.1285, "#10": 0.1019,
+    "#12": 0.0808, "#14": 0.0641, "#16": 0.0508, "#18": 0.0403,
+    "#20": 0.0320, "#22": 0.0253, "#24": 0.0201, "#26": 0.0159,
+    "#28": 0.0126, "#30": 0.0100, "#32": 0.0080, "#34": 0.0063,
+    "#36": 0.0050, "#38": 0.0040, "#40": 0.0031,
+}
+
+
+def _preprocess_expr(expr: str) -> str:
+    """Preprocess SY expressions for AST evaluation.
+
+    Handles xnec2c conventions:
+    - AWG wire gauge: #12 -> 0.0808, #12/in -> 0.0808
+    - Implicit multiplication: '135 ft' -> '135*ft', '2 pi' -> '2*pi'
+    - Builtin constants that are Python keywords: in -> 0.0254
+    """
+    e = expr.strip()
+    # Replace AWG gauges (e.g. #12/in -> diameter_in_inches)
+    for gauge, diam in _AWG.items():
+        e = e.replace(f"{gauge}/in", str(diam))
+        e = e.replace(gauge, str(diam))
+    # Insert implicit * BEFORE replacing builtins, so "73.04328 in" becomes
+    # "73.04328*in" first, then "73.04328*0.0254" (not "73.04328 0.0254").
+    e = re.sub(r'(\d)\s+([a-zA-Z])', r'\1*\2', e)
+    # "2pi" -> "2*pi" (no space), but NOT scientific notation "2.67e-3"
+    e = re.sub(r'(\d)([a-df-zA-DF-Z])', r'\1*\2', e)
+    e = re.sub(r'(\d)([eE])(?![+-]?\d)', r'\1*\2', e)
+    # NOW replace xnec2c builtin constants (after implicit * is in place)
+    e = re.sub(r'\bin\b', '0.0254', e)
+    e = re.sub(r'\bft\b', '0.3048', e)
+    e = re.sub(r'\bmm\b', '0.001', e)
+    e = re.sub(r'\bcm\b', '0.01', e)
+    return e
+
+
+def _resolve_sy(lines: list[str]) -> list[str]:
+    """Resolve SY variable definitions and substitute into subsequent lines.
+
+    Variable names are matched case-insensitively (xnec2c convention).
+    """
+    # Case-insensitive variable storage: keys are lowercased
+    vars_ci: dict[str, float | int] = {}
+
+    # Pass 1 — build symbol table from SY cards
+    for line in lines:
+        s = line.strip()
+        if not _SY_RE.match(s):
+            continue
+        # Strip inline comments before parsing (xnec2c SY lines often have ' or ! comments)
+        s = re.sub(r"\s*['\!].*$", "", s)
+        # SY may have multiple comma-separated assignments: SY X=1, Y=2
+        _, rest = s.split(None, 1)
+        for assignment in rest.split(','):
+            assignment = assignment.strip()
+            if '=' not in assignment:
+                continue
+            name, expr = (p.strip() for p in assignment.split('=', 1))
+            if not name or not expr:
+                continue
+            # Try engineering suffix first (e.g. 5.8pF → 5.8e-12)
+            eng_val = _parse_eng(expr)
+            if eng_val is not None:
+                try:
+                    vars_ci[name.lower()] = float(eng_val)
+                except ValueError:
+                    pass
+            else:
+                try:
+                    vars_ci[name.lower()] = _safe_eval(_preprocess_expr(expr), vars_ci)
+                except Exception:
+                    pass
+
+    # Build regex matching any defined symbol (longest first, case-insensitive)
+    if vars_ci:
+        sorted_names = sorted(vars_ci.keys(), key=len, reverse=True)
+        sym_pat = re.compile(r'\b(' + '|'.join(map(re.escape, sorted_names)) + r')\b', re.IGNORECASE)
+    else:
+        sym_pat = None  # no symbol substitution, but still run field evaluation
+
+    # Pass 2 — substitute symbols, drop SY lines, evaluate field expressions
+    output = []
+    for line in lines:
+        if _SY_RE.match(line.strip()):
+            continue  # remove SY lines — nec2c doesn't understand them
+        # Also skip commented-out SY lines (e.g. 'SY Inp=in)
+        stripped = line.strip()
+        if stripped.startswith("'"):
+            output.append(line)
+            continue
+        def _repl(mo):
+            return _fmt_float(vars_ci[mo.group(1).lower()])
+        # Protect the 2-char card tag from variable substitution (e.g. FR card vs fr variable)
+        parts = line.split(None, 1)
+        if sym_pat is not None:
+            if len(parts) == 2 and len(parts[0]) >= 2 and parts[0][:2].isalpha():
+                card_tag = parts[0]
+                rest = sym_pat.sub(_repl, parts[1])
+                subst = card_tag + '\t' + rest
+            elif len(parts) == 1 and parts[0][:2].isalpha():
+                subst = line  # tag-only line, nothing to substitute
+            else:
+                subst = sym_pat.sub(_repl, line)
+        else:
+            subst = line
+
+        # Evaluate expressions remaining in card fields (e.g. "20-3.45" from "HGH-Lv")
+        # nec2c integer fields MUST NOT contain a decimal point — use CARD_SPECS to cast.
+        # Replace commas with spaces first — some NEC files use comma-separated fields
+        # and comma-joined tokens cause wrong field-index computation for int casting.
+        subst_clean = subst
+        tag2 = subst.strip()[:2].upper() if len(subst.strip()) >= 2 else ""
+        if tag2 not in ("CM", "CE", "SY") and not subst.strip().startswith("'"):
+            subst_clean = subst.replace(',', ' ')
+        tokens = subst_clean.split()
+        if tokens and len(tokens[0]) >= 2 and tokens[0][:2].isalpha():
+            card_type = tokens[0].upper()
+            int_indices = _CARD_INT_FIELDS.get(card_type, set())
+            new_tokens = [tokens[0]]
+            for fi, tok in enumerate(tokens[1:]):
+                # Skip tokens that are already plain numbers
+                try:
+                    v = float(tok)
+                    # Format according to expected type
+                    if fi in int_indices:
+                        new_tokens.append(str(int(round(v))))
+                    else:
+                        new_tokens.append(tok)  # keep original string repr
+                    continue
+                except ValueError:
+                    pass
+                # Try evaluating as expression
+                try:
+                    val = _safe_eval(tok, vars_ci)
+                    if fi in int_indices:
+                        new_tokens.append(str(int(round(val))))
+                    else:
+                        new_tokens.append(_fmt_float(val))
+                except Exception:
+                    # Check for bare builtin constants (in, ft, mm, pi) which
+                    # are Python keywords and can't be parsed by AST.
+                    _BUILTINS_MAP = {"mm": 0.001, "cm": 0.01, "in": 0.0254, "ft": 0.3048, "pi": math.pi}
+                    low = tok.lower()
+                    if low in _BUILTINS_MAP:
+                        v_b = _BUILTINS_MAP[low]
+                        if fi in int_indices:
+                            new_tokens.append(str(int(round(v_b))))
+                        else:
+                            new_tokens.append(_fmt_float(v_b))
+                    else:
+                        # Try engineering suffix as last resort
+                        eng = _parse_eng(tok)
+                        if eng is not None:
+                            new_tokens.append(eng)
+                        else:
+                            new_tokens.append(tok)
+            output.append('\t'.join(new_tokens))
+        else:
+            output.append(subst)
+    return output
+
+
+# ---------------------------------------------------------------------------
+# NEC card integer field indices (0-based, after the card tag).
+# nec2c Fortran parser rejects '.' in integer columns — these fields
+# MUST be formatted as integers even when the SY evaluator returns float.
+# Derived from CARD_SPECS in antenna-agent-model enhanced_nec_parser.py.
+# ---------------------------------------------------------------------------
+_CARD_INT_FIELDS: dict[str, set[int]] = {
+    "GW": {0, 1},          # tag, segments
+    "GA": {0, 1},          # tag, segments
+    "GH": {0, 1},          # tag, segments
+    "GC": {0, 1, 2},       # i, j, k
+    "GM": {0, 1},          # tag increment, new structures
+    "GR": {0, 1},          # tag increment, new structures
+    "GS": {0, 1},          # i1, i2 (scale applies to floats after)
+    "GX": {0, 1},          # tag increment, reflection flags
+    "SP": {0},             # patch shape
+    "SM": {0, 1},          # i1, i2
+    "GE": {0},             # ground flag
+    "EX": {0, 1, 2, 3},    # excitation type, tag, segment, i3
+    "FR": {0, 1, 2, 3},    # type, steps, i1, i2
+    "GN": {0, 1},          # ground type, n_radials
+    "RP": {0, 1, 2, 3},    # mode, theta_count, phi_count, xnda
+    "LD": {0, 1, 2, 3},    # type, tag, from_seg, to_seg
+    "TL": {0, 1, 2, 3},    # tag1, seg1, tag2, seg2
+    "NT": {0, 1, 2, 3},    # tag1, seg1, tag2, seg2
+    "NE": {0, 1, 2, 3},    # type, x_count, y_count, z_count
+    "NH": {0, 1, 2, 3},    # type, x_count, y_count, z_count
+    "EK": {0},             # i1
+    "CP": {0, 1, 2, 3},    # tag1, seg1, tag2, seg2
+    "PQ": {0, 1, 2, 3},    # print control
+    "XQ": {0},             # i1
+    "PT": {0, 1, 2, 3},    # print flags
+}
+
+
+# ---------------------------------------------------------------------------
+# NEC-4 only cards that nec2c does not support
+# ---------------------------------------------------------------------------
+_NEC4_CARDS = {"CW", "IS", "VC", "UM", "JN", "LE", "LH", "PS"}
 
 def sanitize_nec(nec_text: str) -> str:
     """
     Prepare a NEC deck for nec2c:
-    - Remove CM/CE comment cards (nec2c can choke on formatting).
-    - Insert a GE card before the first control card if missing.
-    - Append an EN card at the end if missing.
+    1. Resolve and remove SY variable definitions.
+    2. Remove CM/CE comment cards.
+    3. Strip inline comments (' … and ! …).
+    4. Remove full-line quote-comments ('...).
+    5. Remove NEC-4 only cards that nec2c rejects.
+    6. Remove blank / whitespace-only lines.
+    7. Enforce deck order: geometry cards, GE, control cards, EN.
+    8. Insert GE before first control card if missing.
+    9. Append EN if missing.
     """
-    geometry_cards = {"GW", "GA", "GH", "GM", "GR", "GS", "GX", "SP", "SM", "SC"}
+    geometry_cards = {"GW", "GA", "GH", "GM", "GR", "GS", "GX", "SP", "SM", "SC", "GC"}
     control_cards = {"EX", "FR", "GN", "RP", "LD", "TL", "NT", "NE", "NH", "PQ", "KH",
-                     "XQ", "PT", "NX", "WG", "CP", "PL"}
-    cleaned = []
+                     "XQ", "PT", "NX", "WG", "CP", "PL", "EK", "GD"}
+
+    # Step 1: resolve SY variables
+    raw_lines = nec_text.splitlines()
+    resolved = _resolve_sy(raw_lines)
+
+    # Step 1b: preprocess card fields
+    # - Replace commas with spaces (some NEC files use comma-separated fields)
+    # - Replace AWG wire gauge notation (#12 -> 0.0808 inches, converted to radius)
+    # - Handle percentage notation (50% in segment fields)
+    preprocessed = []
+    for line in resolved:
+        s = line
+        # Replace AWG gauges in card fields (e.g. #12 -> half diameter in meters for radius)
+        for gauge, diam_in in _AWG.items():
+            if gauge in s:
+                # #12/in -> diameter in inches, #12 alone -> radius in meters (diam/2 * 0.0254)
+                s = s.replace(f"{gauge}/in", str(diam_in))
+                s = s.replace(gauge, str(diam_in / 2 * 0.0254))  # radius in meters
+        # Replace commas with spaces in card lines (not SY or CM lines)
+        stripped = s.strip()
+        if stripped and not _SY_RE.match(stripped) and not stripped.startswith("'"):
+            tag2 = stripped[:2].upper() if len(stripped) >= 2 else ""
+            if tag2 not in ("CM", "CE"):
+                s = s.replace(',', ' ')
+        # Handle percentage notation: "50%" -> just use the number.
+        # xnec2c uses % for percent-of-segments; nec2c doesn't support it.
+        # Stripping % is a best-effort approximation.
+        s = re.sub(r'(\d+)%', r'\1', s)
+        # Collapse multiple whitespace (tabs/spaces) into single space to avoid
+        # empty fields that confuse nec2c's fixed-width parser.
+        # Preserve leading tag field by splitting on first whitespace.
+        parts = s.split()
+        if len(parts) > 1 and parts[0][:2].isalpha():
+            s = parts[0] + ' ' + ' '.join(parts[1:])
+        elif parts:
+            s = ' '.join(parts)
+        # Resolve engineering suffixes and builtin expressions in card fields
+        # (5.8pF -> 5.8e-12, 1.22uH -> 1.22e-6, .2in/ft -> 0.01667)
+        if s.strip() and not _SY_RE.match(s.strip()) and not s.strip().startswith("'"):
+            toks = s.split()
+            if len(toks) > 1 and toks[0][:2].isalpha():
+                new_toks = [toks[0]]
+                for tok in toks[1:]:
+                    # Already a plain number?
+                    try:
+                        float(tok)
+                        new_toks.append(tok)
+                        continue
+                    except ValueError:
+                        pass
+                    # Engineering suffix (5.8pF -> 5.8e-12)
+                    eng = _parse_eng(tok)
+                    if eng is not None:
+                        new_toks.append(eng)
+                        continue
+                    # Compound expression with builtins (.2in/ft, 0.00051181/ft)
+                    try:
+                        val = _safe_eval(_preprocess_expr(tok), {})
+                        new_toks.append(_fmt_float(val))
+                        continue
+                    except Exception:
+                        pass
+                    new_toks.append(tok)
+                s = ' '.join(new_toks)
+        preprocessed.append(s)
+    resolved = preprocessed
+
+    geo_lines = []
+    ctrl_lines = []
     has_ge = False
     has_en = False
-    for line in nec_text.splitlines():
-        s = line.lstrip()
+
+    for line in resolved:
+        # Strip inline comments (nec2c doesn't handle ' or ! mid-line)
+        line = re.sub(r"\s*['\!].*$", "", line)
+        s = line.strip()
+
+        # Skip empty lines
+        if not s:
+            continue
+
         tag = s[:2].upper() if len(s) >= 2 else ""
+
+        # Skip lines that don't start with a letter (binary junk, Ctrl-Z EOF marker)
+        if not s[0].isalpha():
+            continue
+
+        # Skip comment cards, NEC-4 cards, and lines starting with '
         if tag in ("CM", "CE"):
             continue
-        if tag == "GE":
-            has_ge = True
+        if s.startswith("'"):
+            continue
+        if tag in _NEC4_CARDS:
+            continue
+        # GF (NGF file load) — not supported by nec2c; skip
+        if tag == "GF":
+            continue
         if tag == "EN":
             has_en = True
-        cleaned.append(line)
+            continue  # we'll add EN at the end
+        if tag == "GE":
+            has_ge = True
+            continue  # we'll insert GE between geo and ctrl
 
-    # Insert GE before first control card if missing
-    if not has_ge:
-        insert_idx = len(cleaned)
-        for i, line in enumerate(cleaned):
-            s = line.lstrip()
-            tag = s[:2].upper() if len(s) >= 2 else ""
-            if tag in control_cards:
-                insert_idx = i
-                break
-        cleaned.insert(insert_idx, "GE 0")
+        # Classify into geometry or control
+        if tag in geometry_cards:
+            geo_lines.append(s)
+        elif tag in control_cards:
+            ctrl_lines.append(s)
+        else:
+            # Unknown card — treat as geometry (safer, before GE)
+            geo_lines.append(s)
 
-    # Append EN if missing
-    if not has_en:
-        cleaned.append("EN")
+    # nec2c only supports LD types 0-5.  xnec2c/4nec2 type 6 ("series RLC
+    # auto-resonance") has explicit R,L,C values, so we can convert to LD 0.
+    fixed_ctrl = []
+    for cl in ctrl_lines:
+        toks = cl.split()
+        if len(toks) >= 2 and toks[0].upper() == "LD":
+            try:
+                ld_type = int(toks[1])
+                if ld_type > 5:
+                    toks[1] = "0"  # series RLC
+                    cl = ' '.join(toks)
+            except ValueError:
+                pass
+        fixed_ctrl.append(cl)
+    ctrl_lines = fixed_ctrl
 
-    return "\n".join(cleaned) + "\n"
+    # Build tag → max_segments map from GW cards so we can clamp
+    # EX/LD segment references that exceed the actual segment count
+    # (caused by xnec2c "50%" notation stripped to bare "50").
+    tag_segs: dict[int, int] = {}
+    for gl in geo_lines:
+        gt = gl.split()
+        if len(gt) >= 3 and gt[0].upper() == "GW":
+            try:
+                wtag, nsegs = int(gt[1]), int(gt[2])
+                if wtag > 0:
+                    tag_segs[wtag] = tag_segs.get(wtag, 0) + nsegs
+            except ValueError:
+                pass
+    if tag_segs:
+        clamped_ctrl = []
+        for cl in ctrl_lines:
+            toks = cl.split()
+            card = toks[0].upper() if toks else ""
+            # EX: fields are type, tag, segment, ...  (indices 1,2,3 after card name → toks[1..3])
+            # LD: fields are type, tag, seg_from, seg_to
+            if card in ("EX", "LD") and len(toks) >= 4:
+                try:
+                    wtag = int(toks[2])
+                    seg = int(toks[3])
+                    max_seg = tag_segs.get(wtag)
+                    if max_seg is not None and seg > max_seg:
+                        toks[3] = str(max(1, max_seg))
+                        cl = ' '.join(toks)
+                except ValueError:
+                    pass
+            clamped_ctrl.append(cl)
+        ctrl_lines = clamped_ctrl
+
+    # nec2c 1.3.1 only outputs impedance data when an RP card is present.
+    # Inject a minimal RP card if the deck doesn't already contain one.
+    has_rp = any(l.split()[0].upper() == "RP" for l in ctrl_lines if l.strip())
+    if not has_rp:
+        ctrl_lines.append("RP 0 1 1 1000 0 0 0 0")
+
+    # Reassemble in correct nec2c order: geometry → GE → control → EN
+    deck = geo_lines + ["GE 0"] + ctrl_lines + ["EN"]
+
+    return "\n".join(deck) + "\n"
 
 def parse_nec_output(txt: str, z0: float = 50.0):
     """Parse NEC2/nec2c textual output to extract impedance (R+jX) vs frequency and compute SWR.
@@ -177,15 +657,22 @@ def parse_nec_output(txt: str, z0: float = 50.0):
             swr_capped.append(v)
         quality.append('good' if (math.isfinite(v) and v < 3.0) else 'poor')
 
+    # Replace inf/nan in the raw swr list too (JSON cannot represent them)
+    swr_safe = [v if math.isfinite(v) else swr_cap_value for v in swr]
+
+    # Sanitize impedance values (JSON cannot represent inf/nan)
+    rs_safe = [v if math.isfinite(v) else 0.0 for v in rs]
+    xs_safe = [v if math.isfinite(v) else 0.0 for v in xs]
+
     return {
         "swr_sweep": {
             "freq_mhz": freqs,
-            "swr": swr,
+            "swr": swr_safe,
             "swr_capped": swr_capped,
             "swr_cap": swr_cap_value,
             "quality": quality,
         },
-        "impedance_sweep": {"freq_mhz": freqs, "r": rs, "x": xs, "z0": z0},
+        "impedance_sweep": {"freq_mhz": freqs, "r": rs_safe, "x": xs_safe, "z0": z0},
     }
 
 
@@ -299,11 +786,19 @@ def parse_pattern_output(txt: str):
             phi_vals.append(phi_v)
             gain_vals.append(gain_v)
 
-    return {"theta": theta_vals, "phi": phi_vals, "gain": gain_vals}
+    # Sanitize gain values (nec2c can produce -999.99 sentinel for no-gain directions)
+    gain_safe = [v if math.isfinite(v) else -999.99 for v in gain_vals]
+    return {"theta": theta_vals, "phi": phi_vals, "gain": gain_safe}
 
 @app.get("/healthz")
 def health():
     return {"ok": True}
+
+@app.post("/sanitize_debug")
+def sanitize_debug(payload: dict = Body(...)):
+    """Debug endpoint: return the sanitized NEC deck without running nec2c."""
+    nec = payload.get("nec_deck") or payload.get("nec_text") or payload.get("nec") or ""
+    return {"sanitized": sanitize_nec(nec)}
 
 @app.post("/run")
 def run(payload: dict = Body(...)):

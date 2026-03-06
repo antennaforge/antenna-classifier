@@ -430,7 +430,15 @@ async function runSimulation(filename) {
     status.textContent = '';
 
     if (!data.ok) {
-      results.innerHTML = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;">Simulation failed: ${esc(data.error || 'Unknown error')}</div>`;
+      let errHtml = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;"><strong>Simulation failed:</strong> ${esc(data.error || 'Unknown error')}`;
+      if (data.error === 'nec_failed' && data.stderr) {
+        errHtml += `<pre style="margin-top:8px;color:var(--muted);font-size:12px;white-space:pre-wrap;max-height:200px;overflow:auto">${esc(data.stderr)}</pre>`;
+      }
+      if (data.error === 'nec_failed') {
+        errHtml += `<div style="margin-top:8px;color:var(--muted);font-size:12px;">This file may use NEC-4 features or syntax not supported by nec2c.</div>`;
+      }
+      errHtml += '</div>';
+      results.innerHTML = errHtml;
       return;
     }
     renderSimResults(data);
@@ -486,15 +494,17 @@ function renderSimResults(data) {
     const axStyle = { gridcolor: '#21262d', zerolinecolor: '#30363d' };
 
     if (data.swr_sweep?.freq_mhz?.length) {
+      const swrMode = data.swr_sweep.freq_mhz.length === 1 ? 'markers' : 'lines+markers';
       Plotly.newPlot('plot-swr', [
-        { x: data.swr_sweep.freq_mhz, y: data.swr_sweep.swr, type: 'scatter', mode: 'lines', name: 'SWR', line: { color: '#58a6ff', width: 2 } },
+        { x: data.swr_sweep.freq_mhz, y: data.swr_sweep.swr, type: 'scatter', mode: swrMode, name: 'SWR', line: { color: '#58a6ff', width: 2 }, marker: { color: '#58a6ff', size: 8 } },
         { x: data.swr_sweep.freq_mhz, y: data.swr_sweep.freq_mhz.map(() => 2), type: 'scatter', mode: 'lines', name: '2:1', line: { color: '#f85149', width: 1, dash: 'dash' } },
       ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'SWR', ...axStyle, rangemode: 'tozero' }, showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
     }
     if (data.impedance_sweep?.freq_mhz?.length) {
+      const impMode = data.impedance_sweep.freq_mhz.length === 1 ? 'markers' : 'lines+markers';
       Plotly.newPlot('plot-impedance', [
-        { x: data.impedance_sweep.freq_mhz, y: data.impedance_sweep.r, type: 'scatter', mode: 'lines', name: 'R (Ω)', line: { color: '#3fb950', width: 2 } },
-        { x: data.impedance_sweep.freq_mhz, y: data.impedance_sweep.x, type: 'scatter', mode: 'lines', name: 'X (Ω)', line: { color: '#d29922', width: 2 } },
+        { x: data.impedance_sweep.freq_mhz, y: data.impedance_sweep.r, type: 'scatter', mode: impMode, name: 'R (Ω)', line: { color: '#3fb950', width: 2 }, marker: { color: '#3fb950', size: 8 } },
+        { x: data.impedance_sweep.freq_mhz, y: data.impedance_sweep.x, type: 'scatter', mode: impMode, name: 'X (Ω)', line: { color: '#d29922', width: 2 }, marker: { color: '#d29922', size: 8 } },
       ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'Ohms', ...axStyle }, showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
     }
     if (data.radiation_pattern?.theta?.length) {

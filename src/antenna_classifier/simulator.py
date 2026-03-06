@@ -105,16 +105,27 @@ class SimulationResult:
     pattern: RadiationPattern | None = None
     raw: dict[str, Any] | None = None
 
+    @staticmethod
+    def _json_safe(v: Any) -> Any:
+        """Replace inf/nan with None for JSON serialization."""
+        if isinstance(v, float) and not math.isfinite(v):
+            return None
+        return v
+
     def to_dict(self) -> dict:
+        _s = self._json_safe
         d: dict[str, Any] = {"filename": self.filename, "ok": self.ok}
         if self.error:
             d["error"] = self.error
+            # Pass through stderr from solver for nec_failed diagnostics
+            if self.raw and "stderr" in self.raw:
+                d["stderr"] = self.raw["stderr"]
         if self.swr:
             d["swr_sweep"] = {
                 "freq_mhz": self.swr.freq_mhz,
-                "swr": self.swr.swr,
+                "swr": [_s(v) for v in self.swr.swr],
                 "z0": self.swr.z0,
-                "min_swr": self.swr.min_swr,
+                "min_swr": _s(self.swr.min_swr),
                 "resonant_freq_mhz": self.swr.resonant_freq,
                 "bandwidth_2to1_mhz": self.swr.bandwidth_2to1,
             }
@@ -130,8 +141,8 @@ class SimulationResult:
                 "theta": self.pattern.theta,
                 "phi": self.pattern.phi,
                 "gain_db": self.pattern.gain_db,
-                "max_gain_dbi": self.pattern.max_gain,
-                "front_to_back_db": self.pattern.front_to_back,
+                "max_gain_dbi": _s(self.pattern.max_gain),
+                "front_to_back_db": _s(self.pattern.front_to_back),
             }
         return d
 
