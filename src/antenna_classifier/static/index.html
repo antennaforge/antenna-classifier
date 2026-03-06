@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Antenna Classifier Dashboard</title>
 <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
 <style>
 :root {
   --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -321,7 +329,9 @@ async function selectFile(filename) {
   dv.innerHTML = '<div style="padding:40px;text-align:center;"><div class="spinner"></div> Loading...</div>';
 
   const data = await fetch(`${BASE_URL}/api/file/${encodeURIComponent(filename)}`).then(r => r.json());
+  _viewer3dLoaded = null; // reset so 3D reloads for new file
   renderDetail(data);
+  load3DView(filename); // 3D View is the default tab
 }
 
 function renderDetail(d) {
@@ -352,14 +362,23 @@ function renderDetail(d) {
 
     <!-- Tabs -->
     <div class="tabs">
-      <div class="tab active" data-tab="tab-sim" onclick="switchTab(this)">Simulation</div>
+      <div class="tab active" data-tab="tab-3d" onclick="switchTab(this)">3D View</div>
+      <div class="tab" data-tab="tab-sim" onclick="switchTab(this)">Simulation</div>
       <div class="tab" data-tab="tab-evidence" onclick="switchTab(this)">Evidence</div>
       <div class="tab" data-tab="tab-validation" onclick="switchTab(this)">Validation (${(d.validation||[]).length})</div>
       <div class="tab" data-tab="tab-nec" onclick="switchTab(this)">NEC Source</div>
     </div>
 
+    <!-- 3D View tab -->
+    <div class="tab-content active" id="tab-3d">
+      <div id="viewer3d-container" style="width:100%;height:500px;background:#0d1117;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative;">
+        <div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D view...</div>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--muted);">Drag to rotate &middot; Scroll to zoom &middot; Right-drag to pan &middot; <span style="color:#58a6ff;">&#9632;</span> Wire <span style="color:#f85149;">&#9632;</span> Excited <span style="color:#d29922;">&#9632;</span> Loaded <span style="color:#ff4444;">&#9679;</span> Feed point</div>
+    </div>
+
     <!-- Simulation tab -->
-    <div class="tab-content active" id="tab-sim">
+    <div class="tab-content" id="tab-sim">
       <div class="sim-controls">
         <button class="btn" id="sim-btn" onclick="runSimulation('${esc(d.filename)}')">Run Simulation</button>
         <span class="sim-status" id="sim-status"></span>
@@ -412,6 +431,7 @@ function switchTab(tabEl) {
   parent.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
   tabEl.classList.add('active');
   document.getElementById(tabEl.dataset.tab).classList.add('active');
+  if (tabEl.dataset.tab === 'tab-3d' && activeFile) load3DView(activeFile);
 }
 
 // ---- Simulation ----
@@ -558,6 +578,29 @@ function renderRadiationPattern(pat) {
   }, { responsive: true });
 }
 
+// ---- 3D View ----
+let _viewer3dLoaded = null; // filename currently rendered
+async function load3DView(filename) {
+  if (_viewer3dLoaded === filename) return;
+  const container = document.getElementById('viewer3d-container');
+  if (!container) return;
+
+  if (!window.Viewer3D) {
+    container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D engine...</div>';
+    await new Promise(r => { const iv = setInterval(() => { if (window.Viewer3D) { clearInterval(iv); r(); }}, 200); });
+  }
+
+  container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading geometry...</div>';
+  try {
+    const geo = await fetch(`${BASE_URL}/api/geometry/${encodeURIComponent(filename)}`).then(r => r.json());
+    container.innerHTML = '';
+    window.Viewer3D.init('viewer3d-container', geo);
+    _viewer3dLoaded = filename;
+  } catch (err) {
+    container.innerHTML = `<div style="color:var(--red);padding:12px;">Failed to load 3D view: ${esc(err.message)}</div>`;
+  }
+}
+
 // ---- Helpers ----
 function esc(s) {
   if (s == null) return '';
@@ -566,5 +609,17 @@ function esc(s) {
   return d.innerHTML;
 }
 </script>
+
+<!-- Three.js 3D viewer module (loaded after importmap) -->
+<script type="module">
+  const baseURL = window.location.pathname.replace(/\/$/, '');
+  try {
+    const mod = await import(baseURL + '/static/viewer3d.js');
+    window.Viewer3D = { init: mod.init, dispose: mod.dispose };
+  } catch (e) {
+    console.warn('3D viewer module failed to load:', e);
+  }
+</script>
+
 </body>
 </html>

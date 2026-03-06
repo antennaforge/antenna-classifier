@@ -180,6 +180,18 @@ def create_app(
             "evidence": cls.evidence,
         })
 
+    @app.get("/api/geometry/{filename:path}")
+    async def get_geometry(filename: str):
+        """Return 3D geometry data for the viewer."""
+        _ensure_catalog()
+        rec = _catalog_index.get(filename)
+        if not rec:
+            raise HTTPException(404, f"File not found: {filename}")
+        p = Path(rec["path"])
+        parsed = parser.parse_file(p)
+        from .visualizer import extract_geometry
+        return JSONResponse(extract_geometry(parsed))
+
     @app.post("/api/simulate/{filename:path}")
     async def run_simulation(filename: str):
         _ensure_catalog()
