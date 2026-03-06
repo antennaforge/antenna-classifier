@@ -22,6 +22,7 @@ ANTENNA_TYPES = [
     "vertical",
     "loop",
     "quad",
+    "quagi",
     "hexbeam",
     "lpda",
     "phased_array",
@@ -36,10 +37,15 @@ ANTENNA_TYPES = [
     "fractal",
     "magnetic_loop",
     "bobtail_curtain",
+    "delta_loop",
+    "v_beam",
+    "batwing",
+    "zigzag",
     "rhombic",
     "beverage",
     "discone",
     "turnstile",
+    "wire_object",
     "unknown",
 ]
 
@@ -103,7 +109,11 @@ def classify(parsed: ParseResult) -> ClassificationResult:
         if result.confidence >= 0.7:
             break
 
-    # If still unknown, last-resort from directory hints
+    # If still unknown, check for wire-grid objects (no EX/FR cards)
+    if result.antenna_type == "unknown":
+        _classify_wire_object(ctx, result)
+
+    # Last-resort from directory hints
     if result.antenna_type == "unknown":
         _classify_from_directory(ctx, result)
 
@@ -286,17 +296,22 @@ class _AnalysisContext:
 
 _KEYWORD_MAP: list[tuple[str, list[str], list[str]]] = [
     ("yagi", ["yagi", "yagi-uda"], []),
+    ("quagi", ["quagi", "quad-yagi", "quad yagi"], []),
     ("dipole", ["dipole", "half-wave dipole", "folded dipole", "half wave"], ["inverted"]),
     ("inverted_v", ["inverted v", "inv-v", "inverted-v", "inv v"], []),
     ("vertical", ["vertical", "ground plane", "groundplane", "quarter-wave", "quarter wave", "1/4 wave"], []),
-    ("loop", ["loop", "delta loop", "full wave loop"], ["log", "magnetic"]),
-    ("quad", ["quad", "cubical quad"], []),
-    ("hexbeam", ["hex beam", "hexbeam", "hex-beam"], []),
+    ("delta_loop", ["delta", "delta loop"], []),
+    ("loop", ["loop", "full wave loop"], ["log", "magnetic", "delta"]),
+    ("quad", ["quad", "cubical quad"], ["quagi"]),
+    ("hexbeam", ["hexbeam", "hex beam", "hex-beam", "hex ", " hex"], []),
     ("lpda", ["lpda", "log periodic", "log-periodic", "log cell", "log-cell"], []),
     ("phased_array", ["phased", "endfire", "broadside", "curtain"], ["bobtail"]),
     ("helix", ["helix", "helical"], []),
     ("collinear", ["collinear", "coco", "coaxial collinear"], []),
     ("moxon", ["moxon"], []),
+    ("v_beam", ["v-beam", "vbeam", "v beam", "vee beam", "multi-vee", "multi vee", "multivee"], []),
+    ("batwing", ["batwing", "bat wing", "bat-wing"], []),
+    ("zigzag", ["zigzag", "zig-zag", "zig zag"], []),
     ("wire_array", ["lazy h", "lazy-h", "sterba", "bruce", "8jk"], []),
     ("bobtail_curtain", ["bobtail", "bobtail curtain"], []),
     ("rhombic", ["rhombic"], []),
@@ -308,6 +323,7 @@ _KEYWORD_MAP: list[tuple[str, list[str], list[str]]] = [
     ("end_fed", ["end fed", "end-fed", "efhw", "zepp"], []),
     ("j_pole", ["j-pole", "j pole", "jpole", "slim jim"], []),
     ("patch", ["patch", "microstrip"], []),
+    ("wire_object", ["wire grid", "wiregrid", "wire-grid"], []),
 ]
 
 
@@ -371,7 +387,8 @@ def _classify_from_directory(ctx: _AnalysisContext, result: ClassificationResult
         "aperiodic": "beverage",
         "fractals": "fractal",
         "spatch": "patch",
-        "objects": "unknown",
+        "objects": "wire_object",
+        "stacks": "phased_array",
     }
     if parent in dir_map:
         result.antenna_type = dir_map[parent]
@@ -397,6 +414,23 @@ def _classify_patch(ctx: _AnalysisContext, result: ClassificationResult) -> None
         result.antenna_type = "patch"
         result.confidence = max(result.confidence, 0.85)
         result.evidence.append("SP/SM (surface patch) cards present")
+
+
+def _classify_wire_object(ctx: _AnalysisContext, result: ClassificationResult) -> None:
+    """Wire-grid object (vehicle, structure) — has geometry but no EX or FR."""
+    if result.confidence >= 0.7:
+        return
+    has_geometry = ctx.n_total_wires > 0 or ctx.has_surface_patch
+    has_ex = bool(ctx.ex_tags)
+    has_fr = ctx.frequency is not None
+    if has_geometry and not has_ex and not has_fr:
+        result.antenna_type = "wire_object"
+        result.confidence = max(result.confidence, 0.6)
+        result.evidence.append("geometry present but no EX/FR cards (wire-grid object)")
+    elif has_geometry and not has_ex:
+        result.antenna_type = "wire_object"
+        result.confidence = max(result.confidence, 0.5)
+        result.evidence.append("geometry present but no EX card (wire-grid object)")
 
 
 def _classify_loop_quad(ctx: _AnalysisContext, result: ClassificationResult) -> None:

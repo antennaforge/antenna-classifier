@@ -5,6 +5,8 @@ Usage:
     antenna-classifier scan <directory>       Scan NEC files, validate, classify, report
     antenna-classifier check <file.nec>       Parse + validate + classify a single file
     antenna-classifier report <directory>      Generate a JSON/CSV catalog of all NEC files
+    antenna-classifier fingerprint <path>      Show card-config fingerprint (file or dir)
+    antenna-classifier similar <file> <dir>    Find NEC files with similar card structure
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import sys
 from pathlib import Path
 
 from . import classifier, parser, validator
+from .fingerprint import fingerprint as make_fingerprint, find_similar, similarity, build_archetype, classify_by_fingerprint
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,6 +45,18 @@ def main(argv: list[str] | None = None) -> int:
     p_report.add_argument("--format", choices=["json", "csv"], default="json", help="Output format")
     p_report.add_argument("--output", "-o", type=Path, help="Output file (default: stdout)")
 
+    # --- fingerprint ---
+    p_fp = sub.add_parser("fingerprint", help="Show card-config fingerprint")
+    p_fp.add_argument("path", type=Path, help="NEC file or directory")
+    p_fp.add_argument("--json", dest="as_json", action="store_true", help="Output as JSON")
+
+    # --- similar ---
+    p_sim = sub.add_parser("similar", help="Find structurally similar NEC files")
+    p_sim.add_argument("file", type=Path, help="Reference NEC file")
+    p_sim.add_argument("directory", type=Path, help="Directory to search")
+    p_sim.add_argument("-n", "--top", type=int, default=10, help="Number of results")
+    p_sim.add_argument("--min-sim", type=float, default=0.5, help="Minimum similarity")
+
     args = ap.parse_args(argv)
 
     if args.command == "scan":
@@ -50,6 +65,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_check(args)
     elif args.command == "report":
         return _cmd_report(args)
+    elif args.command == "fingerprint":
+        return _cmd_fingerprint(args)
+    elif args.command == "similar":
+        return _cmd_similar(args)
     else:
         ap.print_help()
         return 1
@@ -65,6 +84,7 @@ def _process_file(path: Path) -> dict:
     parsed = parser.parse_file(path)
     val = validator.validate(parsed)
     cls = classifier.classify(parsed)
+    fp = make_fingerprint(parsed)
     return {
         "path": str(path),
         "filename": path.name,
@@ -81,6 +101,9 @@ def _process_file(path: Path) -> dict:
         "ground_type": cls.ground_type,
         "wire_count": len(parsed.wire_cards),
         "card_count": len(parsed.cards),
+        "fingerprint": fp.signature,
+        "complexity": round(fp.complexity_score, 3),
+        "feed_complexity": round(fp.feed_complexity, 3),
         "validation_issues": [
             {"severity": i.severity.value, "message": i.message, "line": i.line}
             for i in val.issues
@@ -127,6 +150,12 @@ def _cmd_check(args: argparse.Namespace) -> int:
             icon = "X" if issue.severity.value == "error" else ("!" if issue.severity.value == "warning" else "i")
             loc = f" (line {issue.line})" if issue.line else ""
             print(f"    [{icon}] {issue.message}{loc}")
+
+    # Fingerprint
+    fp = make_fingerprint(parsed)
+    print(f"\n  Fingerprint: {fp.signature}")
+    print(f"  Complexity:  {fp.complexity_score:.3f}")
+    print(f"  Feed:        {fp.feed_complexity:.3f}")
 
     print()
     return 0 if result["valid"] else 1
@@ -208,6 +237,8 @@ def _cmd_report(args: argparse.Namespace) -> int:
             "valid": result["valid"],
             "antenna_type": result["antenna_type"],
             "confidence": result["confidence"],
+            "fingerprint": result["fingerprint"],
+            "complexity": result["complexity"],
             "frequency_mhz": result["frequency_mhz"],
             "band": result["band"],
             "element_count": result["element_count"],
@@ -233,6 +264,87 @@ def _cmd_report(args: argparse.Namespace) -> int:
         out.close()
         print(f"Report written to {args.output} ({len(records)} files)", file=sys.stderr)
 
+    return 0
+
+
+def _cmd_fingerprint(args: argparse.Namespace) -> int:
+    path = args.path
+    if path.is_file():
+        files = [path]
+    elif path.is_dir():
+        files = _collect_nec_files(path)
+    else:
+        print(f"Not found: {path}", file=sys.stderr)
+        return 1
+
+    if not files:
+        print("No .nec files found")
+        return 0
+
+    results = []
+    for f in files:
+        parsed = parser.parse_file(f)
+        fp = make_fingerprint(parsed)
+        cls = classifier.classify(parsed)
+        if args.as_json:
+            entry = fp.to_dict()
+            entry["file"] = str(f)
+            entry["antenna_type"] = cls.antenna_type
+            results.append(entry)
+        else:
+            rel = f.relative_to(path) if f != path and f.is_relative_to(path) else f.name
+            print(f"{fp.signature:<50} {cls.antenna_type:<18} {rel}")
+
+    if args.as_json:
+        json.dump(results, sys.stdout, indent=2)
+        print()
+
+    return 0
+
+
+def _cmd_similar(args: argparse.Namespace) -> int:
+    ref_path = args.file
+    search_dir = args.directory
+
+    if not ref_path.is_file():
+        print(f"File not found: {ref_path}", file=sys.stderr)
+        return 1
+    if not search_dir.is_dir():
+        print(f"Not a directory: {search_dir}", file=sys.stderr)
+        return 1
+
+    # Build reference fingerprint
+    ref_parsed = parser.parse_file(ref_path)
+    ref_fp = make_fingerprint(ref_parsed)
+    ref_cls = classifier.classify(ref_parsed)
+
+    print(f"\nReference: {ref_path.name}")
+    print(f"  Type: {ref_cls.antenna_type} ({ref_cls.confidence:.0%})")
+    print(f"  Fingerprint: {ref_fp.signature}")
+    print()
+
+    # Build candidate fingerprints
+    candidates = []
+    for f in _collect_nec_files(search_dir):
+        if f.resolve() == ref_path.resolve():
+            continue
+        parsed = parser.parse_file(f)
+        fp = make_fingerprint(parsed)
+        rel = f.relative_to(search_dir) if f.is_relative_to(search_dir) else f
+        candidates.append((str(rel), fp))
+
+    matches = find_similar(ref_fp, candidates, top_n=args.top, min_similarity=args.min_sim)
+
+    if not matches:
+        print("No similar files found.")
+        return 0
+
+    print(f"{'Similarity':>10}  {'Signature':<45} {'File'}")
+    print("-" * 100)
+    for label, sim, fp in matches:
+        print(f"{sim:>10.1%}  {fp.signature:<45} {label}")
+
+    print()
     return 0
 
 

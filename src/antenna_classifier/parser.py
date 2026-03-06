@@ -7,6 +7,7 @@ from antenna-agent-model.
 """
 
 import ast
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -197,9 +198,14 @@ class ParseResult:
 
 
 def _preprocess_awg(expr: str) -> str:
-    """Replace AWG gauge notation like '#12/in' with metric diameter."""
+    """Replace AWG gauge notation like '#12/in' or bare '#12' with metric diameter."""
+    # Replace '#XX/in' patterns first
     for gauge, diameter_m in AWG_LOOKUP.items():
         expr = expr.replace(f"{gauge}/in", str(diameter_m))
+    # Then replace bare '#XX' patterns (won't double-match since /in forms are gone)
+    for gauge, diameter_m in AWG_LOOKUP.items():
+        if gauge in expr:
+            expr = expr.replace(gauge, str(diameter_m))
     return expr
 
 
@@ -220,6 +226,13 @@ def _safe_eval(expr: str, sym: dict[str, float]) -> int | float | str:
     cleaned = _preprocess_awg(expr.strip())
     cleaned = _expand_scientific(cleaned)
 
+    # Handle trailing percent (4NEC2 segment-percent notation)
+    if cleaned.endswith("%"):
+        try:
+            return int(cleaned[:-1])
+        except ValueError:
+            pass
+
     # Quick path: plain number
     try:
         if "." in cleaned or "e" in cleaned.lower():
@@ -235,13 +248,33 @@ def _safe_eval(expr: str, sym: dict[str, float]) -> int | float | str:
         return cleaned  # unresolvable — return as string
 
 
+# Math functions available in SY expressions (NEC uses degrees for trig)
+_MATH_FUNCS: dict[str, callable] = {
+    "cos": lambda x: math.cos(math.radians(x)),
+    "sin": lambda x: math.sin(math.radians(x)),
+    "tan": lambda x: math.tan(math.radians(x)),
+    "acos": lambda x: math.degrees(math.acos(x)),
+    "asin": lambda x: math.degrees(math.asin(x)),
+    "atan": lambda x: math.degrees(math.atan(x)),
+    "atan2": lambda y, x: math.degrees(math.atan2(y, x)),
+    "sqrt": math.sqrt,
+    "abs": abs,
+    "log": math.log10,
+    "ln": math.log,
+    "exp": math.exp,
+    "int": lambda x: int(x),
+    "pi": None,  # handled as constant
+}
+
+
 def _eval_node(n: ast.AST, sym: dict[str, float]) -> int | float:
     if isinstance(n, ast.BinOp):
         left = _eval_node(n.left, sym)
         right = _eval_node(n.right, sym)
         ops = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
                ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b,
-               ast.Pow: lambda a, b: a ** b}
+               ast.Pow: lambda a, b: a ** b,
+               ast.Mod: lambda a, b: a % b, ast.FloorDiv: lambda a, b: a // b}
         op_fn = ops.get(type(n.op))
         if op_fn is None:
             raise ValueError(f"Unsupported op {n.op}")
@@ -255,8 +288,21 @@ def _eval_node(n: ast.AST, sym: dict[str, float]) -> int | float:
         raise ValueError(f"Unsupported unary {n.op}")
     if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)):
         return n.value
-    if isinstance(n, ast.Name) and n.id in sym:
-        return sym[n.id]
+    if isinstance(n, ast.Name):
+        key = n.id.lower()  # case-insensitive variable lookup
+        if key in sym:
+            return sym[key]
+        if key == "pi":
+            return math.pi
+        raise ValueError(f"Unknown variable '{n.id}'")
+    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
+        fname = n.func.id.lower()
+        fn = _MATH_FUNCS.get(fname)
+        if fn is not None:
+            args = [_eval_node(a, sym) for a in n.args]
+            return fn(*args)
+        # Check if it's a variable call (e.g., max(a,b))
+        raise ValueError(f"Unknown function '{fname}'")
     raise ValueError(f"Cannot evaluate node {ast.dump(n)}")
 
 
@@ -320,21 +366,36 @@ def _parse_lines(lines: list[str], source: str) -> ParseResult:
             ))
             continue
 
-        # Split card type from parameters
-        if "\t" in raw:
-            parts = raw.split("\t")
-            ctype = parts[0].strip().upper()
-            param_tokens = []
+        # Split card type from parameters.
+        # Strip inline comments first, then extract card type and params.
+        clean = _strip_inline_comment(stripped)
+        if not clean:
+            continue
+        if "\t" in clean:
+            parts = clean.split("\t")
+            first_part = parts[0].strip()
+            # Handle mixed format: spaces within first tab field
+            # e.g. "GW 1 9 0 ... \t' comment" where GW and params are
+            # space-separated but tab separates data from comment
+            if " " in first_part:
+                sub = first_part.split(None, 1)
+                ctype = sub[0].upper()
+                param_tokens = _split_params(sub[1]) if len(sub) > 1 else []
+            else:
+                ctype = first_part.upper()
+                param_tokens = []
             for p in parts[1:]:
                 param_tokens.extend(_split_params(p))
         else:
-            parts = stripped.split(None, 1)
+            parts = clean.split(None, 1)
             ctype = parts[0].upper()
             param_tokens = _split_params(parts[1]) if len(parts) > 1 else []
 
-        # Comment cards
+        # Comment cards — preserve original text (before comment stripping)
         if ctype in ("CM", "CE"):
-            text = parts[1].strip() if len(parts) > 1 else ""
+            # Extract text after card type from the original stripped line
+            cm_match = re.match(r'(?:CM|CE)\s*(.*)', stripped, re.IGNORECASE)
+            text = cm_match.group(1).strip() if cm_match else ""
             result.cards.append(NECCard(
                 line_number=idx, raw=raw, card_type=ctype, text=text,
             ))
@@ -354,19 +415,30 @@ def _parse_lines(lines: list[str], source: str) -> ParseResult:
     return result
 
 
+def _strip_inline_comment(text: str) -> str:
+    """Strip inline comments (apostrophe or exclamation) from a line."""
+    for marker in ("'", "!"):
+        idx = text.find(marker)
+        if idx >= 0:
+            text = text[:idx]
+    return text.rstrip()
+
+
 def _resolve_sy(line: str, sym: dict[str, float], warnings: list[str]) -> None:
     """Resolve one SY line, potentially with multiple comma-separated assignments."""
     parts = line.split(None, 1)
     if len(parts) < 2:
         return
+    # Strip inline comments before splitting assignments
+    body = _strip_inline_comment(parts[1])
     # SY cards can have: SY N=12, D=0.05, H=1.2
-    assignments = parts[1].split(",")
+    assignments = body.split(",")
     for assignment in assignments:
         assignment = assignment.strip()
         if "=" not in assignment:
             continue
         name, expr = assignment.split("=", 1)
-        name = name.strip()
+        name = name.strip().lower()  # NEC variable names are case-insensitive
         expr = expr.strip()
         try:
             val = _safe_eval(expr, sym)
