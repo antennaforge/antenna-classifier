@@ -22,3 +22,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 antenna_classifier = ["static/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
