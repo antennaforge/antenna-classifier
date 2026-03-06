@@ -19,3 +19,5 @@
 | Multiband detection | classifier | medium | not-started | Detect models with multiple FR entries or broadband characteristics. 2026-03-06 |
 | Build archetype library from classified collection | fingerprint | medium | not-started | Use 978 classified files to build per-type archetype profiles for fingerprint-based classification. 2025-07-23 |
 | Investigate 96 remaining invalid files | parser | medium | not-started | Some may be fixable with further parser improvements. 2025-07-23 |
+| Docker NEC simulation integration | simulator | high | done | nec-solver Docker container (nec2c/nec2++/xnec2c), simulator.py client module, sanitize_nec auto-inserts GE/EN cards. 2025-07-24 |
+| Interactive web dashboard | dashboard | high | done | FastAPI dashboard.py + Plotly.js frontend. Browse/filter/search files, view classification detail, run NEC simulations with SWR/impedance/pattern plots. CLI: `antenna-classifier dashboard <dir>`. 2025-07-24 |

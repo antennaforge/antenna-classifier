@@ -57,6 +57,13 @@ def main(argv: list[str] | None = None) -> int:
     p_sim.add_argument("-n", "--top", type=int, default=10, help="Number of results")
     p_sim.add_argument("--min-sim", type=float, default=0.5, help="Minimum similarity")
 
+    # --- dashboard ---
+    p_dash = sub.add_parser("dashboard", help="Launch interactive web dashboard")
+    p_dash.add_argument("directory", type=Path, help="Directory of NEC files")
+    p_dash.add_argument("--port", type=int, default=8501, help="Server port (default: 8501)")
+    p_dash.add_argument("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
+    p_dash.add_argument("--solver-url", default=None, help="NEC solver URL (default: http://localhost:8787)")
+
     args = ap.parse_args(argv)
 
     if args.command == "scan":
@@ -69,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_fingerprint(args)
     elif args.command == "similar":
         return _cmd_similar(args)
+    elif args.command == "dashboard":
+        return _cmd_dashboard(args)
     else:
         ap.print_help()
         return 1
@@ -345,6 +354,22 @@ def _cmd_similar(args: argparse.Namespace) -> int:
         print(f"{sim:>10.1%}  {fp.signature:<45} {label}")
 
     print()
+    return 0
+
+
+def _cmd_dashboard(args) -> int:
+    """Launch the interactive web dashboard."""
+    from .dashboard import run_dashboard
+
+    if not args.directory.is_dir():
+        print(f"Error: {args.directory} is not a directory", file=sys.stderr)
+        return 1
+    run_dashboard(
+        nec_dir=args.directory,
+        port=args.port,
+        host=args.host,
+        solver_url=args.solver_url,
+    )
     return 0
 
 

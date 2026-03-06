@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antenna Classifier Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d;
+  --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+  --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.5;
+}
+a { color: var(--accent); text-decoration: none; }
+
+/* Layout */
+.header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+.header h1 { font-size: 18px; font-weight: 600; }
+.header .stats { margin-left: auto; display: flex; gap: 16px; font-size: 13px; color: var(--muted); }
+.header .stats span { color: var(--text); font-weight: 600; }
+
+.container { display: grid; grid-template-columns: 380px 1fr; height: calc(100vh - 49px); }
+
+/* Sidebar */
+.sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+.sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.sidebar-header input {
+  width: 100%; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); font-size: 13px; outline: none;
+}
+.sidebar-header input:focus { border-color: var(--accent); }
+
+.filter-bar { display: flex; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.filter-bar select {
+  padding: 4px 8px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text); font-size: 12px;
+}
+
+.file-list { flex: 1; overflow-y: auto; }
+.file-item {
+  padding: 8px 16px; border-bottom: 1px solid var(--border); cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; transition: background 0.1s;
+}
+.file-item:hover { background: rgba(88,166,255,0.08); }
+.file-item.active { background: rgba(88,166,255,0.15); border-left: 3px solid var(--accent); }
+.file-item .name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-item .meta { font-size: 11px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+
+.badge {
+  display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 10px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.badge-type { background: rgba(88,166,255,0.15); color: var(--accent); }
+.badge-band { background: rgba(188,140,255,0.15); color: var(--purple); }
+.badge-valid { background: rgba(63,185,80,0.15); color: var(--green); }
+.badge-invalid { background: rgba(248,81,73,0.15); color: var(--red); }
+.badge-conf { background: rgba(210,153,34,0.12); color: var(--yellow); }
+
+/* Main content */
+.main { overflow-y: auto; padding: 24px; }
+.main h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+
+.welcome-msg { text-align: center; padding: 80px 40px; color: var(--muted); }
+.welcome-msg h2 { font-size: 24px; color: var(--text); margin-bottom: 8px; }
+
+/* Summary dashboard */
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.summary-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.summary-card h3 { font-size: 13px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.summary-card .big-number { font-size: 36px; font-weight: 700; }
+
+/* Detail view */
+.detail-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; gap: 16px; flex-wrap: wrap; }
+.detail-title { font-size: 20px; font-weight: 600; word-break: break-all; }
+.detail-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+
+.info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.info-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.info-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.info-card .value { font-size: 18px; font-weight: 600; margin-top: 2px; }
+
+.section { margin-bottom: 24px; }
+.section h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+.evidence-list { list-style: none; }
+.evidence-list li { padding: 4px 0; font-size: 13px; color: var(--muted); }
+.evidence-list li::before { content: '→ '; color: var(--accent); }
+
+.validation-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.validation-table th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 600; }
+.validation-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.validation-table .sev-error { color: var(--red); }
+.validation-table .sev-warning { color: var(--yellow); }
+.validation-table .sev-info { color: var(--accent); }
+
+.nec-viewer { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; max-height: 300px; overflow: auto; white-space: pre; line-height: 1.4; color: var(--muted); }
+
+/* Simulation */
+.sim-controls { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+.btn {
+  padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: opacity 0.15s;
+}
+.btn:hover { opacity: 0.85; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-secondary { background: var(--surface); color: var(--text); }
+.sim-status { font-size: 13px; color: var(--muted); }
+
+.plot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 16px; }
+.plot-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.plot-card h4 { font-size: 12px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; }
+.plot-box { width: 100%; min-height: 320px; }
+
+.sim-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.sim-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
+.sim-stat .label { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+.sim-stat .value { font-size: 20px; font-weight: 700; margin-top: 2px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.tab {
+  padding: 8px 16px; font-size: 13px; font-weight: 500; cursor: pointer;
+  border-bottom: 2px solid transparent; color: var(--muted); transition: all 0.15s;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Loading spinner */
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>&#x1F4E1; Antenna Classifier</h1>
+  <div class="stats" id="header-stats"></div>
+</div>
+
+<div class="container">
+  <!-- Sidebar: file list -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <input type="text" id="search-input" placeholder="Search files...">
+    </div>
+    <div class="filter-bar">
+      <select id="filter-type"><option value="">All types</option></select>
+      <select id="filter-band"><option value="">All bands</option></select>
+      <select id="filter-valid">
+        <option value="">All</option>
+        <option value="valid">Valid only</option>
+        <option value="invalid">Invalid only</option>
+      </select>
+    </div>
+    <div class="file-list" id="file-list"></div>
+  </div>
+
+  <!-- Main: detail or welcome -->
+  <div class="main" id="main-content">
+    <div class="welcome-msg" id="welcome">
+      <h2>Antenna Classifier Dashboard</h2>
+      <p>Select a file from the sidebar to view its classification and run simulations.</p>
+      <div id="summary-area" style="margin-top: 32px; text-align: left;"></div>
+    </div>
+    <div id="detail-view" style="display:none;"></div>
+  </div>
+</div>
+
+<script>
+// ---- State ----
+let catalog = [];
+let summary = {};
+let activeFile = null;
+
+// ---- Boot ----
+document.addEventListener('DOMContentLoaded', async () => {
+  const [catResp, sumResp] = await Promise.all([
+    fetch('/api/catalog').then(r => r.json()),
+    fetch('/api/summary').then(r => r.json()),
+  ]);
+  catalog = catResp.files || [];
+  summary = sumResp;
+  renderStats();
+  populateFilters();
+  renderFileList(catalog);
+  renderSummary();
+});
+
+// ---- Header stats ----
+function renderStats() {
+  const el = document.getElementById('header-stats');
+  el.innerHTML = `
+    <div>Files: <span>${summary.total || 0}</span></div>
+    <div>Valid: <span style="color:var(--green)">${summary.valid || 0}</span></div>
+    <div>Invalid: <span style="color:var(--red)">${summary.invalid || 0}</span></div>
+    <div>Types: <span>${Object.keys(summary.types || {}).length}</span></div>
+  `;
+}
+
+// ---- Filters ----
+function populateFilters() {
+  const typeSelect = document.getElementById('filter-type');
+  const bandSelect = document.getElementById('filter-band');
+  for (const t of Object.keys(summary.types || {}).sort()) {
+    typeSelect.innerHTML += `<option value="${esc(t)}">${esc(t)} (${summary.types[t]})</option>`;
+  }
+  for (const b of Object.keys(summary.bands || {}).sort()) {
+    bandSelect.innerHTML += `<option value="${esc(b)}">${esc(b)} (${summary.bands[b]})</option>`;
+  }
+  document.getElementById('filter-type').addEventListener('change', applyFilters);
+  document.getElementById('filter-band').addEventListener('change', applyFilters);
+  document.getElementById('filter-valid').addEventListener('change', applyFilters);
+  document.getElementById('search-input').addEventListener('input', applyFilters);
+}
+
+function applyFilters() {
+  const search = document.getElementById('search-input').value.toLowerCase();
+  const typeVal = document.getElementById('filter-type').value;
+  const bandVal = document.getElementById('filter-band').value;
+  const validVal = document.getElementById('filter-valid').value;
+  let filtered = catalog;
+  if (search) filtered = filtered.filter(f => f.filename.toLowerCase().includes(search) || (f.antenna_type||'').includes(search));
+  if (typeVal) filtered = filtered.filter(f => f.antenna_type === typeVal);
+  if (bandVal) filtered = filtered.filter(f => f.band === bandVal);
+  if (validVal === 'valid') filtered = filtered.filter(f => f.valid);
+  if (validVal === 'invalid') filtered = filtered.filter(f => !f.valid);
+  renderFileList(filtered);
+}
+
+// ---- File list ----
+function renderFileList(files) {
+  const el = document.getElementById('file-list');
+  if (!files.length) { el.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center;">No files match</div>'; return; }
+  el.innerHTML = files.map(f => `
+    <div class="file-item${activeFile === f.filename ? ' active' : ''}" data-file="${esc(f.filename)}" onclick="selectFile('${esc(f.filename)}')">
+      <div class="name">${esc(f.filename)}</div>
+      <div class="meta">
+        <span class="badge badge-type">${esc(f.antenna_type || 'unknown')}</span>
+        ${f.band ? `<span class="badge badge-band">${esc(f.band)}</span>` : ''}
+        <span class="badge ${f.valid ? 'badge-valid' : 'badge-invalid'}">${f.valid ? 'valid' : 'invalid'}</span>
+        <span class="badge badge-conf">${(f.confidence*100).toFixed(0)}%</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ---- Summary (shown on welcome) ----
+function renderSummary() {
+  const el = document.getElementById('summary-area');
+  el.innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-card">
+        <h3>Total Files</h3>
+        <div class="big-number">${summary.total || 0}</div>
+      </div>
+      <div class="summary-card">
+        <h3>Valid</h3>
+        <div class="big-number" style="color:var(--green)">${summary.valid || 0}</div>
+      </div>
+      <div class="summary-card">
+        <h3>Antenna Types</h3>
+        <div class="big-number">${Object.keys(summary.types || {}).length}</div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Type Distribution</h3>
+      <div id="summary-type-chart" style="width:100%;height:300px;"></div>
+    </div>
+    <div class="section">
+      <h3>Band Distribution</h3>
+      <div id="summary-band-chart" style="width:100%;height:300px;"></div>
+    </div>
+  `;
+  // Type pie chart
+  const types = summary.types || {};
+  Plotly.newPlot('summary-type-chart', [{
+    labels: Object.keys(types), values: Object.values(types),
+    type: 'pie', hole: 0.4,
+    textinfo: 'label+value',
+    marker: { line: { color: '#161b22', width: 2 } }
+  }], { paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+    font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 10, l: 10, r: 10 },
+    showlegend: false
+  }, { responsive: true });
+  // Band bar chart
+  const bands = summary.bands || {};
+  Plotly.newPlot('summary-band-chart', [{
+    x: Object.keys(bands), y: Object.values(bands),
+    type: 'bar', marker: { color: '#bc8cff' }
+  }], { paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+    font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 30, l: 40, r: 10 },
+    xaxis: { color: '#8b949e' }, yaxis: { color: '#8b949e', title: 'Count' }
+  }, { responsive: true });
+}
+
+// ---- File detail ----
+async function selectFile(filename) {
+  activeFile = filename;
+  applyFilters(); // refresh highlights
+
+  const dv = document.getElementById('detail-view');
+  const welcome = document.getElementById('welcome');
+  welcome.style.display = 'none';
+  dv.style.display = 'block';
+  dv.innerHTML = '<div style="padding:40px;text-align:center;"><div class="spinner"></div> Loading...</div>';
+
+  const data = await fetch(`/api/file/${encodeURIComponent(filename)}`).then(r => r.json());
+  renderDetail(data);
+}
+
+function renderDetail(d) {
+  const dv = document.getElementById('detail-view');
+  dv.innerHTML = `
+    <div class="detail-header">
+      <div>
+        <div class="detail-title">${esc(d.filename)}</div>
+        <div class="detail-badges">
+          <span class="badge badge-type">${esc(d.antenna_type)}</span>
+          ${d.band ? `<span class="badge badge-band">${esc(d.band)}</span>` : ''}
+          <span class="badge ${d.valid ? 'badge-valid' : 'badge-invalid'}">${d.valid ? 'valid' : 'invalid'}</span>
+          <span class="badge badge-conf">${(d.confidence*100).toFixed(0)}%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card"><div class="label">Antenna Type</div><div class="value">${esc(d.antenna_type)}</div></div>
+      <div class="info-card"><div class="label">Confidence</div><div class="value">${(d.confidence*100).toFixed(1)}%</div></div>
+      <div class="info-card"><div class="label">Frequency</div><div class="value">${d.frequency_mhz ? d.frequency_mhz.toFixed(2)+' MHz' : 'N/A'}</div></div>
+      <div class="info-card"><div class="label">Band</div><div class="value">${esc(d.band || 'N/A')}</div></div>
+      <div class="info-card"><div class="label">Elements</div><div class="value">${d.element_count || 0}</div></div>
+      <div class="info-card"><div class="label">Wires</div><div class="value">${d.wire_count || 0}</div></div>
+      <div class="info-card"><div class="label">Ground</div><div class="value">${esc(d.ground_type || 'free_space')}</div></div>
+      <div class="info-card"><div class="label">Fingerprint</div><div class="value" style="font-size:13px;font-family:monospace;">${esc(d.fingerprint || 'N/A')}</div></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <div class="tab active" data-tab="tab-sim" onclick="switchTab(this)">Simulation</div>
+      <div class="tab" data-tab="tab-evidence" onclick="switchTab(this)">Evidence</div>
+      <div class="tab" data-tab="tab-validation" onclick="switchTab(this)">Validation (${(d.validation||[]).length})</div>
+      <div class="tab" data-tab="tab-nec" onclick="switchTab(this)">NEC Source</div>
+    </div>
+
+    <!-- Simulation tab -->
+    <div class="tab-content active" id="tab-sim">
+      <div class="sim-controls">
+        <button class="btn" id="sim-btn" onclick="runSimulation('${esc(d.filename)}')">Run Simulation</button>
+        <span class="sim-status" id="sim-status"></span>
+      </div>
+      <div id="sim-results"></div>
+    </div>
+
+    <!-- Evidence tab -->
+    <div class="tab-content" id="tab-evidence">
+      <div class="section">
+        <h3>Classification Evidence</h3>
+        <ul class="evidence-list">
+          ${(d.evidence||[]).map(e => `<li>${esc(e)}</li>`).join('')}
+        </ul>
+      </div>
+      ${d.subtypes && d.subtypes.length ? `
+      <div class="section">
+        <h3>Subtypes</h3>
+        <div>${d.subtypes.map(s=>`<span class="badge badge-type" style="margin:2px;">${esc(s)}</span>`).join('')}</div>
+      </div>` : ''}
+    </div>
+
+    <!-- Validation tab -->
+    <div class="tab-content" id="tab-validation">
+      ${(d.validation||[]).length ? `
+      <table class="validation-table">
+        <thead><tr><th>Severity</th><th>Message</th><th>Line</th></tr></thead>
+        <tbody>
+          ${d.validation.map(v => `
+            <tr>
+              <td class="sev-${v.severity}">${esc(v.severity)}</td>
+              <td>${esc(v.message)}</td>
+              <td>${v.line ?? '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>` : '<p style="color:var(--muted);">No validation issues.</p>'}
+    </div>
+
+    <!-- NEC source tab -->
+    <div class="tab-content" id="tab-nec">
+      <div class="nec-viewer">${esc(d.nec_content || 'No content available')}</div>
+    </div>
+  `;
+}
+
+function switchTab(tabEl) {
+  const parent = tabEl.closest('.main') || document.getElementById('detail-view');
+  parent.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  parent.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  document.getElementById(tabEl.dataset.tab).classList.add('active');
+}
+
+// ---- Simulation ----
+async function runSimulation(filename) {
+  const btn = document.getElementById('sim-btn');
+  const status = document.getElementById('sim-status');
+  const results = document.getElementById('sim-results');
+  btn.disabled = true;
+  status.innerHTML = '<div class="spinner"></div> Running NEC simulation...';
+  results.innerHTML = '';
+
+  try {
+    const resp = await fetch(`/api/simulate/${encodeURIComponent(filename)}`, { method: 'POST' });
+    const data = await resp.json();
+    btn.disabled = false;
+    status.textContent = '';
+
+    if (!data.ok) {
+      results.innerHTML = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;">Simulation failed: ${esc(data.error || 'Unknown error')}</div>`;
+      return;
+    }
+    renderSimResults(data);
+  } catch (err) {
+    btn.disabled = false;
+    status.textContent = '';
+    results.innerHTML = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;">Error: ${esc(err.message)}. Is the nec-solver container running?</div>`;
+  }
+}
+
+function renderSimResults(data) {
+  const el = document.getElementById('sim-results');
+  let html = '';
+
+  // Summary stats
+  const stats = [];
+  if (data.swr_sweep) {
+    stats.push({ label: 'Min SWR', value: data.swr_sweep.min_swr?.toFixed(2) ?? 'N/A' });
+    stats.push({ label: 'Resonant Freq', value: data.swr_sweep.resonant_freq_mhz ? data.swr_sweep.resonant_freq_mhz.toFixed(2)+' MHz' : 'N/A' });
+    stats.push({ label: '2:1 BW', value: data.swr_sweep.bandwidth_2to1_mhz ? data.swr_sweep.bandwidth_2to1_mhz.toFixed(2)+' MHz' : 'N/A' });
+  }
+  if (data.radiation_pattern) {
+    stats.push({ label: 'Max Gain', value: data.radiation_pattern.max_gain_dbi?.toFixed(2)+' dBi' ?? 'N/A' });
+    stats.push({ label: 'F/B Ratio', value: data.radiation_pattern.front_to_back_db ? data.radiation_pattern.front_to_back_db.toFixed(1)+' dB' : 'N/A' });
+  }
+  if (stats.length) {
+    html += '<div class="sim-summary">' + stats.map(s => `
+      <div class="sim-stat"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>
+    `).join('') + '</div>';
+  }
+
+  html += '<div class="plot-grid">';
+
+  // SWR plot
+  if (data.swr_sweep && data.swr_sweep.freq_mhz?.length) {
+    html += `<div class="plot-card"><h4>SWR vs Frequency</h4><div id="plot-swr" class="plot-box"></div></div>`;
+  }
+  // Impedance plot
+  if (data.impedance_sweep && data.impedance_sweep.freq_mhz?.length) {
+    html += `<div class="plot-card"><h4>Impedance vs Frequency</h4><div id="plot-impedance" class="plot-box"></div></div>`;
+  }
+  // Radiation pattern
+  if (data.radiation_pattern && data.radiation_pattern.theta?.length) {
+    html += `<div class="plot-card"><h4>Radiation Pattern</h4><div id="plot-pattern" class="plot-box"></div></div>`;
+  }
+
+  html += '</div>';
+  el.innerHTML = html;
+
+  // Render plots after DOM update
+  requestAnimationFrame(() => {
+    const plotStyle = { paper_bgcolor: 'transparent', plot_bgcolor: '#0d1117', font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 40, l: 50, r: 20 } };
+    const axStyle = { gridcolor: '#21262d', zerolinecolor: '#30363d' };
+
+    if (data.swr_sweep?.freq_mhz?.length) {
+      Plotly.newPlot('plot-swr', [
+        { x: data.swr_sweep.freq_mhz, y: data.swr_sweep.swr, type: 'scatter', mode: 'lines', name: 'SWR', line: { color: '#58a6ff', width: 2 } },
+        { x: data.swr_sweep.freq_mhz, y: data.swr_sweep.freq_mhz.map(() => 2), type: 'scatter', mode: 'lines', name: '2:1', line: { color: '#f85149', width: 1, dash: 'dash' } },
+      ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'SWR', ...axStyle, rangemode: 'tozero' }, showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
+    }
+    if (data.impedance_sweep?.freq_mhz?.length) {
+      Plotly.newPlot('plot-impedance', [
+        { x: data.impedance_sweep.freq_mhz, y: data.impedance_sweep.r, type: 'scatter', mode: 'lines', name: 'R (Ω)', line: { color: '#3fb950', width: 2 } },
+        { x: data.impedance_sweep.freq_mhz, y: data.impedance_sweep.x, type: 'scatter', mode: 'lines', name: 'X (Ω)', line: { color: '#d29922', width: 2 } },
+      ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'Ohms', ...axStyle }, showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
+    }
+    if (data.radiation_pattern?.theta?.length) {
+      renderRadiationPattern(data.radiation_pattern);
+    }
+  });
+}
+
+function renderRadiationPattern(pat) {
+  // Group by phi to make E-plane and H-plane cuts
+  const byPhi = {};
+  for (let i = 0; i < pat.theta.length; i++) {
+    const phi = pat.phi[i];
+    if (!byPhi[phi]) byPhi[phi] = { theta: [], gain: [] };
+    byPhi[phi].theta.push(pat.theta[i]);
+    byPhi[phi].gain.push(pat.gain_db[i]);
+  }
+
+  const phis = Object.keys(byPhi).map(Number).sort((a,b) => a-b);
+  const traces = [];
+  const colors = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#bc8cff'];
+
+  // Show up to 4 phi cuts, always include phi=0 and phi=90 if present
+  let selectedPhis = phis.slice(0, 4);
+  if (phis.includes(0) && !selectedPhis.includes(0)) selectedPhis[0] = 0;
+  if (phis.includes(90) && !selectedPhis.includes(90)) selectedPhis[selectedPhis.length > 1 ? 1 : selectedPhis.length] = 90;
+
+  selectedPhis.forEach((phi, idx) => {
+    const data = byPhi[phi];
+    // Convert gain to linear for polar plot (shift so min is visible)
+    const minG = Math.min(...data.gain);
+    const shifted = data.gain.map(g => Math.max(0, g - minG));
+    traces.push({
+      type: 'scatterpolar', mode: 'lines',
+      r: shifted, theta: data.theta,
+      name: `φ=${phi}°`,
+      line: { color: colors[idx % colors.length], width: 2 },
+    });
+  });
+
+  Plotly.newPlot('plot-pattern', traces, {
+    paper_bgcolor: 'transparent', plot_bgcolor: '#0d1117',
+    font: { color: '#e6edf3', size: 11 },
+    polar: {
+      bgcolor: '#0d1117',
+      angularaxis: { gridcolor: '#21262d', linecolor: '#30363d', direction: 'clockwise' },
+      radialaxis: { gridcolor: '#21262d', linecolor: '#30363d', angle: 45 },
+    },
+    showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 },
+    margin: { t: 20, b: 20, l: 40, r: 40 },
+  }, { responsive: true });
+}
+
+// ---- Helpers ----
+function esc(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>

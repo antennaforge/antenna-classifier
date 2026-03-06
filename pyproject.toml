@@ -11,6 +11,9 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = []
 
+[project.optional-dependencies]
+dashboard = ["fastapi>=0.110", "uvicorn>=0.29"]
+
 [project.scripts]
 antenna-classifier = "antenna_classifier.cli:main"
 
