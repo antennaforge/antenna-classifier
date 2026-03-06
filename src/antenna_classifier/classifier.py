@@ -87,16 +87,17 @@ def classify(parsed: ParseResult) -> ClassificationResult:
     )
 
     # Run classifiers in priority order — first high-confidence match wins
+    # Specific structural detectors first, then general topology (loops)
     classifiers = [
         _classify_from_comments,
         _classify_helix,
         _classify_patch,
-        _classify_loop_quad,
         _classify_hexbeam,
         _classify_lpda,
         _classify_vertical,
         _classify_moxon,
         _classify_yagi,
+        _classify_loop_quad,
         _classify_phased_array,
         _classify_collinear,
         _classify_wire_array,
@@ -179,27 +180,50 @@ class _WireGroup:
                 vert += abs(z2 - z1)
         return horiz > vert * 1.5 if (horiz + vert) > 0 else False
 
-    @property
-    def span_x(self) -> float:
-        xs = []
+    def _gather(self, k1: str, k2: str) -> list[float]:
+        vals = []
         for w in self.wires:
             lp = w.labeled_params
-            for k in ("x1", "x2"):
+            for k in (k1, k2):
                 v = lp.get(k)
                 if isinstance(v, (int, float)):
-                    xs.append(v)
+                    vals.append(v)
+        return vals
+
+    @property
+    def span_x(self) -> float:
+        xs = self._gather("x1", "x2")
         return max(xs) - min(xs) if xs else 0.0
 
     @property
+    def span_y(self) -> float:
+        ys = self._gather("y1", "y2")
+        return max(ys) - min(ys) if ys else 0.0
+
+    @property
     def span_z(self) -> float:
-        zs = []
+        zs = self._gather("z1", "z2")
+        return max(zs) - min(zs) if zs else 0.0
+
+    @property
+    def dominant_span(self) -> float:
+        """The largest span across any axis."""
+        return max(self.span_x, self.span_y, self.span_z)
+
+    @property
+    def element_direction(self) -> tuple[float, float, float]:
+        """Unit vector along the dominant axis of this wire group."""
+        dx, dy, dz = 0.0, 0.0, 0.0
         for w in self.wires:
             lp = w.labeled_params
-            for k in ("z1", "z2"):
-                v = lp.get(k)
-                if isinstance(v, (int, float)):
-                    zs.append(v)
-        return max(zs) - min(zs) if zs else 0.0
+            coords = [lp.get(k) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
+            if all(isinstance(v, (int, float)) for v in coords):
+                x1, y1, z1, x2, y2, z2 = coords
+                dx += x2 - x1
+                dy += y2 - y1
+                dz += z2 - z1
+        mag = math.sqrt(dx*dx + dy*dy + dz*dz)
+        return (dx/mag, dy/mag, dz/mag) if mag > 0 else (0, 0, 0)
 
 
 class _AnalysisContext:
@@ -304,14 +328,14 @@ _KEYWORD_MAP: list[tuple[str, list[str], list[str]]] = [
     ("helix", ["helix", "helical"], []),
     ("collinear", ["collinear", "coco", "coaxial collinear"], []),
     ("moxon", ["moxon"], []),
-    ("v_beam", ["v-beam", "vbeam", "v beam", "vee beam", "multi-vee", "multi vee", "multivee"], []),
+    ("v_beam", ["v-beam", "vbeam", "v beam", "vee beam", "multi-vee", "multi vee", "multivee", " vee", "vee "], []),
     ("batwing", ["batwing", "bat wing", "bat-wing"], []),
     ("zigzag", ["zigzag", "zig-zag", "zig zag"], []),
     ("wire_array", ["lazy h", "lazy-h", "sterba", "bruce", "8jk"], []),
     ("bobtail_curtain", ["bobtail", "bobtail curtain"], []),
     ("rhombic", ["rhombic"], []),
     ("beverage", ["beverage"], []),
-    ("discone", ["discone", "disc-cone"], []),
+    ("discone", ["discone", "disc-cone", "biconical"], []),
     ("turnstile", ["turnstile"], []),
     ("fractal", ["fractal", "koch", "sierpinski"], []),
     ("magnetic_loop", ["magnetic loop", "mag loop", "small loop", "magloop"], []),
@@ -359,7 +383,8 @@ def _classify_patch(ctx: _AnalysisContext, result: ClassificationResult) -> None
 
 
 def _classify_wire_object(ctx: _AnalysisContext, result: ClassificationResult) -> None:
-    """Wire-grid object (vehicle, structure) — has geometry but no EX or FR."""
+    """Wire-grid object (vehicle, structure) — has geometry but no EX or FR,
+    or extremely high wire count indicating a wire-grid mesh model."""
     if result.confidence >= 0.7:
         return
     has_geometry = ctx.n_total_wires > 0 or ctx.has_surface_patch
@@ -373,6 +398,11 @@ def _classify_wire_object(ctx: _AnalysisContext, result: ClassificationResult) -
         result.antenna_type = "wire_object"
         result.confidence = max(result.confidence, 0.5)
         result.evidence.append("geometry present but no EX card (wire-grid object)")
+    elif has_geometry and ctx.n_total_wires > 500:
+        # Extremely high wire count with EX: mesh model (vehicle/ship/horn)
+        result.antenna_type = "wire_object"
+        result.confidence = max(result.confidence, 0.6)
+        result.evidence.append(f"very high wire count ({ctx.n_total_wires}) suggests wire-grid model")
 
 
 def _classify_loop_quad(ctx: _AnalysisContext, result: ClassificationResult) -> None:
@@ -381,29 +411,83 @@ def _classify_loop_quad(ctx: _AnalysisContext, result: ClassificationResult) -> 
         return
     if ctx.n_wire_groups < 1:
         return
+    # Wire-grid mesh models (vehicles, horns, reflectors) have many wires
+    # and incidental topological cycles; real quads max out around 100 wires.
+    if ctx.n_total_wires > 120:
+        return
 
-    closed_groups = 0
-    for grp in ctx.wire_groups:
-        if len(grp.wires) < 3:
-            continue
-        # Check if wire endpoints form a closed path
-        first = grp.wires[0]
-        last = grp.wires[-1]
-        start = (first.labeled_params.get("x1"), first.labeled_params.get("y1"), first.labeled_params.get("z1"))
-        end = (last.labeled_params.get("x2"), last.labeled_params.get("y2"), last.labeled_params.get("z2"))
-        if all(isinstance(v, (int, float)) for v in start + end):
-            dist = math.sqrt(sum((a - b)**2 for a, b in zip(start, end)))
-            if dist < 0.01:  # effectively closed
-                closed_groups += 1
+    n_loops = _count_wire_loops(ctx)
 
-    if closed_groups >= 2:
+    if n_loops >= 2:
         result.antenna_type = "quad"
         result.confidence = max(result.confidence, 0.75)
-        result.evidence.append(f"{closed_groups} closed wire loops detected (quad)")
-    elif closed_groups == 1:
+        result.evidence.append(f"{n_loops} closed wire loops detected (quad)")
+    elif n_loops == 1:
         result.antenna_type = "loop"
         result.confidence = max(result.confidence, 0.6)
         result.evidence.append("1 closed wire loop detected")
+
+
+def _count_wire_loops(ctx: _AnalysisContext) -> int:
+    """Count independent closed loops using cyclomatic number (E - V + C).
+
+    Builds an endpoint graph from all wires, merges nearby points, and
+    computes the cycle rank.  Works regardless of tag assignment or
+    loading stubs hanging off the main loops.
+    """
+    tol = 0.05  # 5cm merge tolerance
+    nodes: list[tuple[float, ...]] = []
+
+    def find_node(pt: tuple[float, ...]) -> int:
+        for i, n in enumerate(nodes):
+            if math.sqrt(sum((a - b)**2 for a, b in zip(pt, n))) < tol:
+                return i
+        nodes.append(pt)
+        return len(nodes) - 1
+
+    edges: set[tuple[int, int]] = set()
+    adj: dict[int, set[int]] = {}
+    for grp in ctx.wire_groups:
+        for w in grp.wires:
+            lp = w.labeled_params
+            coords = [lp.get(k) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
+            if not all(isinstance(v, (int, float)) for v in coords):
+                continue
+            ni = find_node(tuple(coords[:3]))
+            nj = find_node(tuple(coords[3:]))
+            if ni == nj:
+                continue
+            edge = (min(ni, nj), max(ni, nj))
+            if edge not in edges:
+                edges.add(edge)
+                adj.setdefault(ni, set()).add(nj)
+                adj.setdefault(nj, set()).add(ni)
+
+    if not edges:
+        return 0
+
+    # Count connected components
+    visited: set[int] = set()
+    n_components = 0
+    for start in adj:
+        if start in visited:
+            continue
+        n_components += 1
+        queue = [start]
+        while queue:
+            n = queue.pop()
+            if n in visited:
+                continue
+            visited.add(n)
+            for nb in adj.get(n, set()):
+                if nb not in visited:
+                    queue.append(nb)
+
+    # Cyclomatic number: independent cycles = E - V + C
+    n_edges = len(edges)
+    n_vertices = len(visited)
+    cycles = n_edges - n_vertices + n_components
+    return max(cycles, 0)
 
 
 def _classify_hexbeam(ctx: _AnalysisContext, result: ClassificationResult) -> None:
@@ -491,35 +575,76 @@ def _classify_moxon(ctx: _AnalysisContext, result: ClassificationResult) -> None
 
 
 def _classify_yagi(ctx: _AnalysisContext, result: ClassificationResult) -> None:
-    """Yagi: multiple parallel horizontal elements along a boom axis."""
+    """Yagi: multiple parallel elements along a boom axis (axis-agnostic)."""
     if result.confidence >= 0.7:
         return
     if ctx.n_wire_groups < 2:
         return
 
-    horizontal = [g for g in ctx.wire_groups if g.is_primarily_horizontal]
-    if len(horizontal) < 2:
+    # Gather linear elements: single-wire groups or groups that form a line
+    linear = [g for g in ctx.wire_groups if g.dominant_span > 0]
+    if len(linear) < 2:
         return
 
-    # Check elements are roughly parallel (similar X spans, stacked in Y or Z)
-    spans = [g.span_x for g in horizontal]
-    if all(s > 0 for s in spans):
-        # Yagis have elements roughly symmetric about center, different lengths
-        centroids = [g.centroid for g in horizontal]
-        # Check if centroids are spread along one axis (boom)
-        zs = [c[2] for c in centroids]
-        ys = [c[1] for c in centroids]
-        z_spread = max(zs) - min(zs) if zs else 0
-        y_spread = max(ys) - min(ys) if ys else 0
-        boom_spread = max(z_spread, y_spread)
+    # Compute centroid spread along each axis
+    centroids = [g.centroid for g in linear]
+    xs = [c[0] for c in centroids]
+    ys = [c[1] for c in centroids]
+    zs = [c[2] for c in centroids]
+    spreads = [
+        (max(xs) - min(xs), "X"),
+        (max(ys) - min(ys), "Y"),
+        (max(zs) - min(zs), "Z"),
+    ]
+    boom_spread, boom_axis = max(spreads, key=lambda s: s[0])
 
-        if boom_spread > 0 and len(horizontal) >= 2:
-            if len(horizontal) >= 3:
-                result.confidence = max(result.confidence, 0.7)
-            else:
-                result.confidence = max(result.confidence, 0.55)
-            result.antenna_type = "yagi"
-            result.evidence.append(f"{len(horizontal)} parallel horizontal elements spread {boom_spread:.2f}m")
+    if boom_spread <= 0:
+        return
+
+    # Check elements are roughly parallel: direction vectors should be similar
+    dirs = [g.element_direction for g in linear]
+    ref = dirs[0]
+    parallel_count = 0
+    for d in dirs:
+        dot = abs(ref[0]*d[0] + ref[1]*d[1] + ref[2]*d[2])
+        if dot > 0.85:  # within ~30 degrees
+            parallel_count += 1
+
+    n_elements = len(linear)
+    parallel_frac = parallel_count / n_elements
+
+    # For stepped-diameter yagis: many tags share centroids (same element)
+    # Group by proximity along boom
+    unique_positions = _count_unique_boom_positions(centroids, boom_axis)
+
+    if parallel_frac > 0.7 and unique_positions >= 2:
+        # Single excitation + linear parallel elements = yagi
+        if unique_positions >= 3:
+            result.confidence = max(result.confidence, 0.75)
+        else:
+            result.confidence = max(result.confidence, 0.55)
+        # Loading cards are very common on yagis (element tapering etc)
+        has_ld = any(c.card_type == "LD" for c in ctx.parsed.cards)
+        if has_ld and len(ctx.ex_tags) == 1:
+            result.confidence = min(result.confidence + 0.1, 1.0)
+        result.antenna_type = "yagi"
+        result.evidence.append(
+            f"{unique_positions} elements along {boom_axis} boom, "
+            f"{parallel_frac:.0%} parallel ({n_elements} groups)"
+        )
+
+
+def _count_unique_boom_positions(centroids: list[tuple[float, float, float]], axis: str) -> int:
+    """Count distinct element positions along the boom axis, merging nearby centroids."""
+    idx = {"X": 0, "Y": 1, "Z": 2}[axis]
+    positions = sorted(c[idx] for c in centroids)
+    if not positions:
+        return 0
+    unique = [positions[0]]
+    for p in positions[1:]:
+        if abs(p - unique[-1]) > 0.001:  # gap > 1mm = different element
+            unique.append(p)
+    return len(unique)
 
 
 def _classify_phased_array(ctx: _AnalysisContext, result: ClassificationResult) -> None:
@@ -565,7 +690,7 @@ def _classify_wire_array(ctx: _AnalysisContext, result: ClassificationResult) ->
 
 
 def _classify_dipole(ctx: _AnalysisContext, result: ClassificationResult) -> None:
-    """Dipole: fallback for 1-2 horizontal elements without yagi-like boom."""
+    """Dipole: fallback for 1-2 elements without yagi-like boom."""
     if result.confidence >= 0.7:
         return
     if ctx.n_wire_groups == 0:
@@ -575,17 +700,22 @@ def _classify_dipole(ctx: _AnalysisContext, result: ClassificationResult) -> Non
     if not excited:
         excited = ctx.wire_groups[:1]
 
-    if any(g.is_primarily_horizontal for g in excited):
-        if ctx.n_wire_groups <= 2 and not ctx.has_tl:
-            # Check for inverted-V: horizontal wires with some Z slope
-            for g in excited:
-                z_span = g.span_z
-                x_span = g.span_x
-                if z_span > 0 and x_span > 0 and z_span / x_span > 0.15:
-                    result.antenna_type = "inverted_v"
-                    result.confidence = max(result.confidence, 0.55)
-                    result.evidence.append("single element with significant Z droop (inverted-V)")
-                    return
+    # Accept any linear element (horizontal or vertical with no ground)
+    has_linear = any(g.dominant_span > 0 for g in excited)
+    if not has_linear:
+        return
+
+    if ctx.n_wire_groups <= 2 and not ctx.has_tl:
+        # Check for inverted-V: element with significant Z droop
+        for g in excited:
+            z_span = g.span_z
+            horiz_span = max(g.span_x, g.span_y)
+            if z_span > 0 and horiz_span > 0 and z_span / horiz_span > 0.15:
+                result.antenna_type = "inverted_v"
+                result.confidence = max(result.confidence, 0.55)
+                result.evidence.append("single element with significant Z droop (inverted-V)")
+                return
+        if any(g.is_primarily_horizontal for g in excited):
             result.antenna_type = "dipole"
             result.confidence = max(result.confidence, 0.5)
             result.evidence.append("1-2 horizontal elements, simple feed")
