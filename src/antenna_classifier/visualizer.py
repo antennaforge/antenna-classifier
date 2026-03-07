@@ -22,6 +22,18 @@ class _Wire:
     loaded_segments: list[int] = field(default_factory=list)
 
 
+def _to_float(val: Any, default: float = 0.0) -> float | None:
+    """Convert a value to float. Returns None if it's an unresolved SY expression."""
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+    return default
+
+
 def extract_geometry(parsed: ParseResult) -> dict[str, Any]:
     """Extract 3D geometry from a parsed NEC file for visualization.
 
@@ -35,13 +47,16 @@ def extract_geometry(parsed: ParseResult) -> dict[str, Any]:
         p = card.labeled_params
 
         if ct == "GW":
+            coords = [_to_float(p.get(k, 0.0)) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
+            if any(c is None for c in coords):
+                continue  # skip wires with unresolved SY expressions
             wires.append(_Wire(
                 tag=p.get("tag", 0),
                 points=[
-                    [p.get("x1", 0.0), p.get("y1", 0.0), p.get("z1", 0.0)],
-                    [p.get("x2", 0.0), p.get("y2", 0.0), p.get("z2", 0.0)],
+                    [coords[0], coords[1], coords[2]],
+                    [coords[3], coords[4], coords[5]],
                 ],
-                radius=p.get("radius") or 0.001,
+                radius=_to_float(p.get("radius", 0.001), 0.001) or 0.001,
                 segments=p.get("segments", 1),
             ))
 
@@ -84,7 +99,7 @@ def extract_geometry(parsed: ParseResult) -> dict[str, Any]:
             wires.append(_Wire(tag=tag, points=points, radius=wire_r, segments=segs))
 
         elif ct == "GS":
-            factor = p.get("factor", 1.0) or 1.0
+            factor = _to_float(p.get("factor", 1.0), 1.0) or 1.0
             for w in wires:
                 for pt in w.points:
                     pt[0] *= factor
@@ -121,13 +136,13 @@ def extract_geometry(parsed: ParseResult) -> dict[str, Any]:
         elif ct == "GM":
             i1_tag = p.get("i1", 0)
             i2_tag = p.get("i2", 0)
-            ro_x = math.radians(p.get("roX", 0.0) or 0.0)
-            ro_y = math.radians(p.get("roY", 0.0) or 0.0)
-            ro_z = math.radians(p.get("roZ", 0.0) or 0.0)
-            tr_x = p.get("trX", 0.0) or 0.0
-            tr_y = p.get("trY", 0.0) or 0.0
-            tr_z = p.get("trZ", 0.0) or 0.0
-            its = int(p.get("its", 0) or 0)
+            ro_x = math.radians(_to_float(p.get("roX", 0.0), 0.0) or 0.0)
+            ro_y = math.radians(_to_float(p.get("roY", 0.0), 0.0) or 0.0)
+            ro_z = math.radians(_to_float(p.get("roZ", 0.0), 0.0) or 0.0)
+            tr_x = _to_float(p.get("trX", 0.0), 0.0) or 0.0
+            tr_y = _to_float(p.get("trY", 0.0), 0.0) or 0.0
+            tr_z = _to_float(p.get("trZ", 0.0), 0.0) or 0.0
+            its = int(_to_float(p.get("its", 0), 0) or 0)
 
             def match_tag(tag: int) -> bool:
                 if i1_tag == 0 and i2_tag == 0:
