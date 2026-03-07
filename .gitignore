@@ -6,3 +6,7 @@ dist/
 build/
 *.egg
 .eggs/
+
+# Docker secrets (never commit)
+.secrets/*
+!.secrets/README.md

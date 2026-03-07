@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ from .simulator import simulate, DEFAULT_URL as DEFAULT_SOLVER_URL
 # Lazy import FastAPI so the rest of the package works without it installed
 # ---------------------------------------------------------------------------
 try:
-    from fastapi import FastAPI, Query, HTTPException
+    from fastapi import FastAPI, Query, HTTPException, Request
     from fastapi.responses import HTMLResponse, JSONResponse, Response
     from fastapi.staticfiles import StaticFiles
 except ImportError:
@@ -281,6 +282,219 @@ def create_app(
             _catalog_ready = False
         threading.Thread(target=_build_catalog, daemon=True).start()
         return JSONResponse({"reloaded": "started"})
+
+    # ------------------------------------------------------------------
+    # My Antenna endpoints — AI generation + Postgres storage
+    # ------------------------------------------------------------------
+    from .storage import ensure_table, list_antennas, get_antenna, create_antenna, delete_antenna
+    from .nec_generator import generate_nec_from_form, generate_nec_from_pdf
+
+    # User NEC directory for simulation (written temp files)
+    _user_nec_dir = Path(os.getenv("USER_NEC_DIR", "/data/user_nec_files"))
+    _user_nec_dir.mkdir(parents=True, exist_ok=True)
+
+    @app.on_event("startup")
+    async def _init_user_antennas_table():
+        try:
+            ensure_table()
+        except Exception as exc:
+            print(f"[my-antennas] DB table init skipped: {exc}", file=sys.stderr)
+
+    @app.get("/api/my-antennas")
+    async def list_my_antennas():
+        """List all user-generated antennas (no NEC content)."""
+        try:
+            rows = list_antennas()
+            # Serialise datetimes
+            for r in rows:
+                for k in ("created_at", "updated_at"):
+                    if hasattr(r.get(k), "isoformat"):
+                        r[k] = r[k].isoformat()
+            return JSONResponse({"antennas": rows})
+        except Exception as exc:
+            return JSONResponse({"antennas": [], "error": str(exc)})
+
+    @app.get("/api/my-antennas/{antenna_id}")
+    async def get_my_antenna(antenna_id: int):
+        """Get a single user antenna including NEC content."""
+        row = get_antenna(antenna_id)
+        if not row:
+            raise HTTPException(404, "Antenna not found")
+        for k in ("created_at", "updated_at"):
+            if hasattr(row.get(k), "isoformat"):
+                row[k] = row[k].isoformat()
+        if isinstance(row.get("metadata"), dict):
+            pass  # already a dict
+        return JSONResponse(row)
+
+    @app.post("/api/my-antennas/generate")
+    async def generate_my_antenna_form(request: "Request"):
+        """Generate NEC via AI from form data and save to Postgres."""
+        body = await request.json()
+        name = body.get("name", "").strip()
+        antenna_type = body.get("antenna_type", "dipole")
+        frequency_mhz = float(body.get("frequency_mhz", 14.0))
+        ground_type = body.get("ground_type", "free_space")
+        description = body.get("description", "")
+
+        if not name:
+            raise HTTPException(400, "Name is required")
+
+        try:
+            result = generate_nec_from_form(
+                antenna_type=antenna_type,
+                frequency_mhz=frequency_mhz,
+                ground_type=ground_type,
+                description=description,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc))
+        except Exception as exc:
+            raise HTTPException(500, f"AI generation failed: {exc}")
+
+        nec_content = result["nec_content"]
+
+        # Classify the generated NEC to get band
+        try:
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".nec", dir=str(_user_nec_dir), delete=False, mode="w",
+            )
+            tmp.write(nec_content)
+            tmp.close()
+            parsed = parser.parse_file(Path(tmp.name))
+            cls = classifier.classify(parsed)
+            band = cls.band
+        except Exception:
+            band = None
+
+        row = create_antenna(
+            name=name,
+            description=description,
+            antenna_type=antenna_type,
+            frequency_mhz=frequency_mhz,
+            band=band,
+            ground_type=ground_type,
+            nec_content=nec_content,
+            source="form",
+            metadata={"model": result.get("model"), "usage": result.get("usage")},
+        )
+        for k in ("created_at", "updated_at"):
+            if hasattr(row.get(k), "isoformat"):
+                row[k] = row[k].isoformat()
+        return JSONResponse(row, status_code=201)
+
+    @app.delete("/api/my-antennas/{antenna_id}")
+    async def delete_my_antenna(antenna_id: int):
+        ok = delete_antenna(antenna_id)
+        if not ok:
+            raise HTTPException(404, "Antenna not found")
+        return JSONResponse({"deleted": True})
+
+    # ---- Simulate / view a user antenna by writing temp NEC file ----
+
+    def _write_user_nec(antenna_id: int) -> Path:
+        """Write user antenna NEC to a temp file and return the path."""
+        row = get_antenna(antenna_id)
+        if not row:
+            raise HTTPException(404, "Antenna not found")
+        p = _user_nec_dir / f"user_{antenna_id}.nec"
+        p.write_text(row["nec_content"])
+        return p
+
+    @app.get("/api/my-antennas/{antenna_id}/geometry")
+    async def user_antenna_geometry(antenna_id: int):
+        p = _write_user_nec(antenna_id)
+        parsed = parser.parse_file(p)
+        from .visualizer import extract_geometry
+        return JSONResponse(extract_geometry(parsed))
+
+    @app.post("/api/my-antennas/{antenna_id}/simulate")
+    async def user_antenna_simulate(antenna_id: int):
+        p = _write_user_nec(antenna_id)
+        result = simulate(p, base_url=solver_url)
+        return JSONResponse(result.to_dict())
+
+    @app.post("/api/my-antennas/{antenna_id}/pattern")
+    async def user_antenna_pattern(antenna_id: int, type: str = "elevation"):
+        p = _write_user_nec(antenna_id)
+        if type not in ("elevation", "azimuth", "full"):
+            raise HTTPException(400, f"Invalid pattern type: {type}")
+        from .simulator import simulate_pattern
+        result = simulate_pattern(p, base_url=solver_url, force_pattern=type)
+        return JSONResponse(result.to_dict())
+
+    @app.post("/api/my-antennas/{antenna_id}/sweep")
+    async def user_antenna_sweep(antenna_id: int):
+        p = _write_user_nec(antenna_id)
+        parsed = parser.parse_file(p)
+        wires = len(parsed.wire_cards)
+        n_pts = 21 if wires <= 10 else 11 if wires <= 30 else 7
+        from .simulator import simulate_sweep
+        result = simulate_sweep(p, base_url=solver_url, n_points=n_pts)
+        return JSONResponse(result.to_dict())
+
+    @app.post("/api/my-antennas/upload-pdf")
+    async def generate_from_pdf(request: "Request"):
+        """Upload PDF, extract text, generate NEC via AI, save to Postgres."""
+        from starlette.datastructures import UploadFile
+        form = await request.form()
+        pdf_file = form.get("pdf")
+        if not pdf_file or not hasattr(pdf_file, "read"):
+            raise HTTPException(400, "No PDF file uploaded")
+
+        name = form.get("name", "").strip() or "PDF Upload"
+        extra = form.get("description", "").strip()
+
+        pdf_bytes = await pdf_file.read()
+        if len(pdf_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(400, "PDF too large (max 10 MB)")
+
+        try:
+            result = generate_nec_from_pdf(pdf_bytes, extra_instructions=extra)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            raise HTTPException(500, f"AI generation failed: {exc}")
+
+        nec_content = result["nec_content"]
+
+        # Classify
+        try:
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".nec", dir=str(_user_nec_dir), delete=False, mode="w",
+            )
+            tmp.write(nec_content)
+            tmp.close()
+            parsed = parser.parse_file(Path(tmp.name))
+            cls = classifier.classify(parsed)
+            antenna_type = cls.antenna_type
+            band = cls.band
+            freq = cls.frequency_mhz
+        except Exception:
+            antenna_type = "unknown"
+            band = None
+            freq = None
+
+        row = create_antenna(
+            name=name,
+            description=extra,
+            antenna_type=antenna_type,
+            frequency_mhz=freq,
+            band=band,
+            nec_content=nec_content,
+            source="pdf",
+            metadata={
+                "model": result.get("model"),
+                "usage": result.get("usage"),
+                "pdf_text_preview": result.get("pdf_text", "")[:500],
+            },
+        )
+        for k in ("created_at", "updated_at"):
+            if hasattr(row.get(k), "isoformat"):
+                row[k] = row[k].isoformat()
+        return JSONResponse(row, status_code=201)
 
     return app
 

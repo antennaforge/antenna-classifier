@@ -155,6 +155,56 @@ a { color: var(--accent); text-decoration: none; }
 /* Loading spinner */
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* My Antennas panel */
+.my-antennas-panel { border-bottom: 1px solid var(--border); }
+.my-antennas-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; cursor: pointer; user-select: none;
+  background: linear-gradient(135deg, rgba(88,166,255,0.08), rgba(188,140,255,0.08));
+}
+.my-antennas-header h3 { font-size: 12px; text-transform: uppercase; color: var(--accent); margin: 0; }
+.my-antennas-header .count { font-size: 11px; color: var(--muted); }
+.my-antennas-header .toggle-arrow { color: var(--muted); font-size: 10px; transition: transform 0.2s; }
+.my-antennas-header .toggle-arrow.open { transform: rotate(90deg); }
+.my-antennas-body { display: none; max-height: 250px; overflow-y: auto; }
+.my-antennas-body.open { display: block; }
+.my-antenna-item {
+  padding: 8px 16px; cursor: pointer; border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.my-antenna-item:hover { background: rgba(88,166,255,0.06); }
+.my-antenna-item.active { background: rgba(88,166,255,0.12); border-left: 3px solid var(--accent); }
+.my-antenna-item .name { font-size: 13px; font-weight: 500; }
+.my-antenna-item .meta { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+.my-antenna-actions { padding: 8px 16px; display: flex; gap: 6px; }
+.btn-sm { padding: 5px 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; font-weight: 600; }
+.btn-ai { background: linear-gradient(135deg, #58a6ff, #bc8cff); color: #fff; border: none; }
+.btn-ai:hover { opacity: 0.85; }
+.btn-pdf { background: var(--surface); color: var(--text); }
+.btn-pdf:hover { border-color: #58a6ff; }
+.btn-del { background: transparent; color: var(--red); border-color: var(--red); padding: 2px 6px; font-size: 10px; }
+.btn-del:hover { background: rgba(248,81,73,0.15); }
+
+/* Modal */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.6); align-items: center; justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 24px; width: 480px; max-width: 90vw; max-height: 85vh; overflow-y: auto;
+}
+.modal h2 { font-size: 16px; margin-bottom: 16px; }
+.modal label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; text-transform: uppercase; font-weight: 600; }
+.modal input, .modal select, .modal textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--text); font-size: 13px; box-sizing: border-box;
+}
+.modal textarea { resize: vertical; min-height: 60px; font-family: inherit; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.modal-status { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
 </style>
 </head>
 <body>
@@ -167,6 +217,21 @@ a { color: var(--accent); text-decoration: none; }
 <div class="container">
   <!-- Sidebar: file list -->
   <div class="sidebar">
+    <!-- My Antennas panel -->
+    <div class="my-antennas-panel">
+      <div class="my-antennas-header" onclick="toggleMyAntennas()">
+        <h3>&#x2728; My Antennas <span class="count" id="my-antenna-count"></span></h3>
+        <span class="toggle-arrow" id="my-antenna-arrow">&#x25B6;</span>
+      </div>
+      <div class="my-antennas-body" id="my-antennas-body">
+        <div class="my-antenna-actions">
+          <button class="btn-sm btn-ai" onclick="openGenerateModal()">+ AI Generate</button>
+          <button class="btn-sm btn-pdf" onclick="openPdfModal()">&#128196; From PDF</button>
+        </div>
+        <div id="my-antenna-list"></div>
+      </div>
+    </div>
+
     <div class="sidebar-header">
       <input type="text" id="search-input" placeholder="Search files...">
     </div>
@@ -853,6 +918,314 @@ async function load3DView(filename) {
   }
 }
 
+// ==================================================================
+// My Antennas
+// ==================================================================
+let myAntennas = [];
+let activeUserAntenna = null;
+
+async function loadMyAntennas() {
+  try {
+    const resp = await fetch(`${BASE_URL}/api/my-antennas`).then(r => r.json());
+    myAntennas = resp.antennas || [];
+  } catch { myAntennas = []; }
+  renderMyAntennaList();
+}
+
+function toggleMyAntennas() {
+  const body = document.getElementById('my-antennas-body');
+  const arrow = document.getElementById('my-antenna-arrow');
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+  if (body.classList.contains('open') && !myAntennas.length) loadMyAntennas();
+}
+
+function renderMyAntennaList() {
+  document.getElementById('my-antenna-count').textContent = myAntennas.length ? `(${myAntennas.length})` : '';
+  const el = document.getElementById('my-antenna-list');
+  if (!myAntennas.length) {
+    el.innerHTML = '<div style="padding:12px 16px;color:var(--muted);font-size:12px;">No antennas yet. Use AI Generate to create one!</div>';
+    return;
+  }
+  el.innerHTML = myAntennas.map(a => `
+    <div class="my-antenna-item${activeUserAntenna === a.id ? ' active' : ''}" onclick="selectUserAntenna(${a.id})">
+      <div style="display:flex;justify-content:space-between;align-items:start;">
+        <div class="name">${esc(a.name)}</div>
+        <button class="btn-del" onclick="event.stopPropagation();deleteUserAntenna(${a.id})" title="Delete">&times;</button>
+      </div>
+      <div class="meta">
+        <span class="badge badge-type">${esc(a.antenna_type || 'unknown')}</span>
+        ${a.band ? `<span class="badge badge-band">${esc(a.band)}</span>` : ''}
+        <span class="badge" style="background:rgba(188,140,255,0.15);color:#bc8cff;">${esc(a.source)}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function selectUserAntenna(id) {
+  activeFile = null;
+  activeUserAntenna = id;
+  applyFilters(); // clear catalog highlight
+  renderMyAntennaList();
+
+  const dv = document.getElementById('detail-view');
+  const welcome = document.getElementById('welcome');
+  welcome.style.display = 'none';
+  dv.style.display = 'block';
+  dv.innerHTML = '<div style="padding:40px;text-align:center;"><div class="spinner"></div> Loading...</div>';
+
+  const data = await fetch(`${BASE_URL}/api/my-antennas/${id}`).then(r => r.json());
+  _viewer3dLoaded = null;
+  _simLoadedFile = null;
+  renderUserAntennaDetail(data);
+}
+
+function renderUserAntennaDetail(d) {
+  const dv = document.getElementById('detail-view');
+  dv.innerHTML = `
+    <div class="detail-header">
+      <div>
+        <div class="detail-title">&#x2728; ${esc(d.name)}</div>
+        <div class="detail-badges">
+          <span class="badge badge-type">${esc(d.antenna_type || 'unknown')}</span>
+          ${d.band ? `<span class="badge badge-band">${esc(d.band)}</span>` : ''}
+          <span class="badge" style="background:rgba(188,140,255,0.15);color:#bc8cff;">${esc(d.source)}</span>
+          ${d.frequency_mhz ? `<span class="badge badge-band">${d.frequency_mhz.toFixed(2)} MHz</span>` : ''}
+        </div>
+      </div>
+    </div>
+    ${d.description ? `<p style="color:var(--muted);font-size:13px;margin:8px 0 16px;">${esc(d.description)}</p>` : ''}
+
+    <div class="tabs">
+      <div class="tab active" data-tab="tab-user-3d" onclick="switchUserTab(this)">3D View</div>
+      <div class="tab" data-tab="tab-user-sim" onclick="switchUserTab(this)">Simulation</div>
+      <div class="tab" data-tab="tab-user-nec" onclick="switchUserTab(this)">NEC Source</div>
+    </div>
+
+    <div class="tab-content active" id="tab-user-3d">
+      <div id="viewer3d-container" style="width:100%;height:500px;background:#0d1117;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative;">
+        <div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D view...</div>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--muted);">Drag to rotate &middot; Scroll to zoom &middot; Right-drag to pan</div>
+    </div>
+
+    <div class="tab-content" id="tab-user-sim">
+      <div id="sim-loading" style="text-align:center;padding:40px;color:var(--muted);">
+        <div class="spinner"></div> Running NEC simulation &amp; frequency sweep...
+      </div>
+      <div id="sim-error" style="display:none;"></div>
+      <div id="sim-content" style="display:none;">
+        <div class="sim-summary" id="sim-summary-stats"></div>
+        <div class="plot-grid">
+          <div class="plot-card"><h4>SWR vs Frequency</h4><div id="plot-swr" class="plot-box"></div></div>
+          <div class="plot-card"><h4>Impedance vs Frequency</h4><div id="plot-impedance" class="plot-box"></div></div>
+          <div class="plot-card" style="grid-column:1/-1;">
+            <h4 style="display:flex;align-items:center;gap:12px;">Radiation Pattern
+              <span id="pattern-buttons" style="display:inline-flex;gap:4px;margin-left:auto;font-size:12px;">
+                <button class="pat-btn" onclick="forceUserPattern('elevation')" title="Elevation">Elevation</button>
+                <button class="pat-btn" onclick="forceUserPattern('azimuth')" title="Azimuth">Azimuth</button>
+                <button class="pat-btn" onclick="forceUserPattern('full')" title="3D">3D</button>
+                <select id="dr-range" class="dr-select" onchange="reRenderPattern()" title="Dynamic range">
+                  <option value="20">20 dB</option>
+                  <option value="30">30 dB</option>
+                  <option value="40" selected>40 dB</option>
+                  <option value="60">60 dB</option>
+                  <option value="0">Full</option>
+                </select>
+              </span>
+            </h4>
+            <div id="plot-pattern" class="plot-box" style="min-height:540px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-user-nec">
+      <div class="nec-viewer">${esc(d.nec_content || 'No content')}</div>
+    </div>
+  `;
+  loadUser3D(d.id);
+}
+
+function switchUserTab(tabEl) {
+  const parent = document.getElementById('detail-view');
+  parent.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  parent.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  document.getElementById(tabEl.dataset.tab).classList.add('active');
+  if (tabEl.dataset.tab === 'tab-user-3d' && activeUserAntenna) loadUser3D(activeUserAntenna);
+  if (tabEl.dataset.tab === 'tab-user-sim' && activeUserAntenna) loadUserSim(activeUserAntenna);
+}
+
+let _userSimLoaded = null;
+async function loadUser3D(id) {
+  const container = document.getElementById('viewer3d-container');
+  if (!container) return;
+  if (!window.Viewer3D) {
+    container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D engine...</div>';
+    await new Promise(r => { const iv = setInterval(() => { if (window.Viewer3D) { clearInterval(iv); r(); }}, 200); });
+  }
+  container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading geometry...</div>';
+  try {
+    const geo = await fetch(`${BASE_URL}/api/my-antennas/${id}/geometry`).then(r => r.json());
+    container.innerHTML = '';
+    window.Viewer3D.init('viewer3d-container', geo);
+  } catch (err) {
+    container.innerHTML = `<div style="color:var(--red);padding:12px;">Failed: ${esc(err.message)}</div>`;
+  }
+}
+
+async function loadUserSim(id) {
+  if (_userSimLoaded === id) return;
+  _userSimLoaded = id;
+  const loading = document.getElementById('sim-loading');
+  const errEl = document.getElementById('sim-error');
+  const content = document.getElementById('sim-content');
+  loading.style.display = 'block'; errEl.style.display = 'none'; content.style.display = 'none';
+  try {
+    const [patResp, sweepResp, geoResp] = await Promise.all([
+      fetch(`${BASE_URL}/api/my-antennas/${id}/simulate`, { method: 'POST' }).then(r => r.json()),
+      fetch(`${BASE_URL}/api/my-antennas/${id}/sweep`, { method: 'POST' }).then(r => r.json()),
+      fetch(`${BASE_URL}/api/my-antennas/${id}/geometry`).then(r => r.json()).catch(() => null),
+    ]);
+    loading.style.display = 'none';
+    if (!patResp.ok && !sweepResp.ok) {
+      errEl.innerHTML = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;"><strong>Simulation failed:</strong> ${esc(patResp.error || sweepResp.error || 'Unknown')}</div>`;
+      errEl.style.display = 'block';
+      _userSimLoaded = null;
+      return;
+    }
+    renderSimulation(sweepResp.ok ? sweepResp : patResp, patResp.ok ? patResp : null, geoResp);
+    content.style.display = 'block';
+  } catch (err) {
+    loading.style.display = 'none';
+    errEl.innerHTML = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;">Error: ${esc(err.message)}</div>`;
+    errEl.style.display = 'block';
+    _userSimLoaded = null;
+  }
+}
+
+async function forceUserPattern(type) {
+  if (!activeUserAntenna) return;
+  const patEl = document.getElementById('plot-pattern');
+  patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);"><div class="spinner"></div> Computing ' + esc(type) + ' pattern...</div>';
+  document.querySelectorAll('.pat-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().startsWith(type.slice(0, 4))));
+  try {
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/${activeUserAntenna}/pattern?type=${type}`, { method: 'POST' }).then(r => r.json());
+    if (!resp.ok) { patEl.innerHTML = '<div style="color:var(--red);padding:20px;">Failed: ' + esc(resp.error) + '</div>'; return; }
+    const pat = resp.radiation_pattern;
+    if (pat?.theta?.length) { _lastPatData = pat; renderRadiationPattern(pat, _lastGeoData); }
+    else patEl.innerHTML = '<div style="padding:20px;color:var(--muted);">No pattern data</div>';
+  } catch (e) { patEl.innerHTML = '<div style="color:var(--red);padding:20px;">Error: ' + esc(e.message) + '</div>'; }
+}
+
+async function deleteUserAntenna(id) {
+  if (!confirm('Delete this antenna?')) return;
+  await fetch(`${BASE_URL}/api/my-antennas/${id}`, { method: 'DELETE' });
+  if (activeUserAntenna === id) {
+    activeUserAntenna = null;
+    document.getElementById('detail-view').style.display = 'none';
+    document.getElementById('welcome').style.display = 'block';
+  }
+  await loadMyAntennas();
+}
+
+// ---- Modals ----
+function openGenerateModal() {
+  const sel = document.getElementById('gen-type');
+  if (!sel.options.length || sel.options.length === 1) {
+    // Populate types from classifier
+    fetch(`${BASE_URL}/api/types`).then(r => r.json()).then(d => {
+      sel.innerHTML = (d.types || []).filter(t => t !== 'unknown' && t !== 'wire_object' && t !== 'error')
+        .map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
+    });
+  }
+  document.getElementById('gen-status').textContent = '';
+  document.getElementById('generate-modal').classList.add('open');
+}
+
+function openPdfModal() {
+  document.getElementById('pdf-status').textContent = '';
+  document.getElementById('pdf-modal').classList.add('open');
+}
+
+function closeModals() {
+  document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('open'));
+}
+
+async function submitGenerate() {
+  const btn = document.getElementById('gen-submit');
+  const status = document.getElementById('gen-status');
+  const name = document.getElementById('gen-name').value.trim();
+  if (!name) { status.innerHTML = '<span style="color:var(--red);">Name is required</span>'; return; }
+  btn.disabled = true;
+  status.innerHTML = '<div class="spinner"></div> Generating NEC with AI... this may take 15-30 seconds';
+  try {
+    const body = {
+      name,
+      antenna_type: document.getElementById('gen-type').value,
+      frequency_mhz: parseFloat(document.getElementById('gen-freq').value) || 14.0,
+      ground_type: document.getElementById('gen-ground').value,
+      description: document.getElementById('gen-desc').value,
+    };
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/generate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const row = await resp.json();
+    status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+    closeModals();
+    // Reset form
+    document.getElementById('gen-name').value = '';
+    document.getElementById('gen-desc').value = '';
+    await loadMyAntennas();
+    // Auto-open the panel and select the new antenna
+    document.getElementById('my-antennas-body').classList.add('open');
+    document.getElementById('my-antenna-arrow').classList.add('open');
+    selectUserAntenna(row.id);
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
+  } finally { btn.disabled = false; }
+}
+
+async function submitPdf() {
+  const btn = document.getElementById('pdf-submit');
+  const status = document.getElementById('pdf-status');
+  const fileInput = document.getElementById('pdf-file');
+  if (!fileInput.files.length) { status.innerHTML = '<span style="color:var(--red);">Select a PDF file</span>'; return; }
+  btn.disabled = true;
+  status.innerHTML = '<div class="spinner"></div> Uploading & generating... this may take 30-60 seconds';
+  try {
+    const fd = new FormData();
+    fd.append('pdf', fileInput.files[0]);
+    fd.append('name', document.getElementById('pdf-name').value.trim() || 'PDF Upload');
+    fd.append('description', document.getElementById('pdf-desc').value);
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/upload-pdf`, { method: 'POST', body: fd });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const row = await resp.json();
+    status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+    closeModals();
+    fileInput.value = '';
+    document.getElementById('pdf-name').value = '';
+    document.getElementById('pdf-desc').value = '';
+    await loadMyAntennas();
+    document.getElementById('my-antennas-body').classList.add('open');
+    document.getElementById('my-antenna-arrow').classList.add('open');
+    selectUserAntenna(row.id);
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
+  } finally { btn.disabled = false; }
+}
+
+// Load my antennas on boot
+(async () => { try { await loadMyAntennas(); } catch {} })();
+
 // ---- Helpers ----
 function esc(s) {
   if (s == null) return '';
@@ -861,6 +1234,50 @@ function esc(s) {
   return d.innerHTML;
 }
 </script>
+
+<!-- Generate Modal -->
+<div class="modal-overlay" id="generate-modal">
+  <div class="modal">
+    <h2>&#x2728; Generate Antenna with AI</h2>
+    <label>Name *</label>
+    <input id="gen-name" placeholder="e.g. My 20m 3-element Yagi">
+    <label>Antenna Type</label>
+    <select id="gen-type"></select>
+    <label>Frequency (MHz)</label>
+    <input id="gen-freq" type="number" step="0.01" value="14.0">
+    <label>Ground</label>
+    <select id="gen-ground">
+      <option value="free_space">Free Space</option>
+      <option value="perfect">Perfect Ground</option>
+      <option value="real">Real Ground (avg earth)</option>
+    </select>
+    <label>Description / Details</label>
+    <textarea id="gen-desc" placeholder="Optional: describe element spacing, height, materials, etc."></textarea>
+    <div class="modal-status" id="gen-status"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-ai" id="gen-submit" onclick="submitGenerate()">Generate</button>
+    </div>
+  </div>
+</div>
+
+<!-- PDF Upload Modal -->
+<div class="modal-overlay" id="pdf-modal">
+  <div class="modal">
+    <h2>&#128196; Generate from PDF</h2>
+    <label>Name</label>
+    <input id="pdf-name" placeholder="e.g. Cebik 10m Phased Array">
+    <label>PDF File *</label>
+    <input id="pdf-file" type="file" accept=".pdf">
+    <label>Additional Instructions</label>
+    <textarea id="pdf-desc" placeholder="Optional: any special notes for the AI"></textarea>
+    <div class="modal-status" id="pdf-status"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-ai" id="pdf-submit" onclick="submitPdf()">Upload &amp; Generate</button>
+    </div>
+  </div>
+</div>
 
 <!-- Three.js 3D viewer module (loaded after importmap) -->
 <script type="module">

@@ -12,7 +12,13 @@ license = {text = "MIT"}
 dependencies = []
 
 [project.optional-dependencies]
-dashboard = ["fastapi>=0.110", "uvicorn>=0.29"]
+dashboard = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "psycopg2-binary>=2.9",
+    "openai>=1.30",
+    "pdfplumber>=0.11",
+]
 
 [project.scripts]
 antenna-classifier = "antenna_classifier.cli:main"

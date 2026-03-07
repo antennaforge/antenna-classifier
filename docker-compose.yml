@@ -30,14 +30,30 @@ services:
       - NEC_DIR=/data/nec_files
       - NEC_SOLVER_URL=http://ac-nec-solver:8787
       - ROOT_PATH=/antenna
+      # Postgres (hamfeeds wspr database on shared Docker network)
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-wspr}
+      - POSTGRES_USER=${POSTGRES_USER:-wspr_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-change_this_password_in_production}
     volumes:
       - ${NEC_FILES_DIR:-./nec_files}:/data/nec_files:ro
+      - user_nec_files:/data/user_nec_files
+    secrets:
+      - openai_api_key
     networks:
       - default
       - hamfeeds_wspr_network
     depends_on:
       nec-solver:
         condition: service_healthy
+
+volumes:
+  user_nec_files:
+
+secrets:
+  openai_api_key:
+    file: ${OPENAI_API_KEY_FILE:-./.secrets/openai_api_key}
 
 networks:
   hamfeeds_wspr_network:
