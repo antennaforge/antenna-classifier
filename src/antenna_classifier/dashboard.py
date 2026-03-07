@@ -284,6 +284,29 @@ def create_app(
         return JSONResponse({"reloaded": "started"})
 
     # ------------------------------------------------------------------
+    # Hamfeeds user identity from trusted proxy headers
+    # ------------------------------------------------------------------
+
+    def _get_hf_user(request: "Request") -> dict | None:
+        """Extract hamfeeds user from trusted proxy headers."""
+        uid = request.headers.get("X-HF-User-Id")
+        if not uid:
+            return None
+        return {
+            "user_id": int(uid),
+            "callsign": request.headers.get("X-HF-Callsign", ""),
+            "ai_enabled": request.headers.get("X-HF-AI-Enabled") == "1",
+        }
+
+    @app.get("/api/me")
+    async def get_current_user(request: "Request"):
+        """Return the current user's identity from proxy headers."""
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            return JSONResponse({"authenticated": False})
+        return JSONResponse({"authenticated": True, **hf_user})
+
+    # ------------------------------------------------------------------
     # My Antenna endpoints — AI generation + Postgres storage
     # ------------------------------------------------------------------
     from .storage import ensure_table, list_antennas, get_antenna, create_antenna, delete_antenna
@@ -301,10 +324,13 @@ def create_app(
             print(f"[my-antennas] DB table init skipped: {exc}", file=sys.stderr)
 
     @app.get("/api/my-antennas")
-    async def list_my_antennas():
-        """List all user-generated antennas (no NEC content)."""
+    async def list_my_antennas(request: "Request"):
+        """List user-generated antennas (no NEC content)."""
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
         try:
-            rows = list_antennas()
+            rows = list_antennas(owner_user_id=hf_user["user_id"])
             # Serialise datetimes
             for r in rows:
                 for k in ("created_at", "updated_at"):
@@ -315,9 +341,12 @@ def create_app(
             return JSONResponse({"antennas": [], "error": str(exc)})
 
     @app.get("/api/my-antennas/{antenna_id}")
-    async def get_my_antenna(antenna_id: int):
+    async def get_my_antenna(antenna_id: int, request: "Request"):
         """Get a single user antenna including NEC content."""
-        row = get_antenna(antenna_id)
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        row = get_antenna(antenna_id, owner_user_id=hf_user["user_id"])
         if not row:
             raise HTTPException(404, "Antenna not found")
         for k in ("created_at", "updated_at"):
@@ -330,6 +359,11 @@ def create_app(
     @app.post("/api/my-antennas/generate")
     async def generate_my_antenna_form(request: "Request"):
         """Generate NEC via AI from form data and save to Postgres."""
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        if not hf_user["ai_enabled"]:
+            raise HTTPException(403, "AI features not enabled for your account. Contact admin.")
         body = await request.json()
         name = body.get("name", "").strip()
         antenna_type = body.get("antenna_type", "dipole")
@@ -377,6 +411,7 @@ def create_app(
             nec_content=nec_content,
             source="form",
             metadata={"model": result.get("model"), "usage": result.get("usage")},
+            owner_user_id=hf_user["user_id"],
         )
         for k in ("created_at", "updated_at"):
             if hasattr(row.get(k), "isoformat"):
@@ -384,17 +419,20 @@ def create_app(
         return JSONResponse(row, status_code=201)
 
     @app.delete("/api/my-antennas/{antenna_id}")
-    async def delete_my_antenna(antenna_id: int):
-        ok = delete_antenna(antenna_id)
+    async def delete_my_antenna(antenna_id: int, request: "Request"):
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        ok = delete_antenna(antenna_id, owner_user_id=hf_user["user_id"])
         if not ok:
             raise HTTPException(404, "Antenna not found")
         return JSONResponse({"deleted": True})
 
     # ---- Simulate / view a user antenna by writing temp NEC file ----
 
-    def _write_user_nec(antenna_id: int) -> Path:
+    def _write_user_nec(antenna_id: int, owner_user_id: int | None = None) -> Path:
         """Write user antenna NEC to a temp file and return the path."""
-        row = get_antenna(antenna_id)
+        row = get_antenna(antenna_id, owner_user_id=owner_user_id)
         if not row:
             raise HTTPException(404, "Antenna not found")
         p = _user_nec_dir / f"user_{antenna_id}.nec"
@@ -402,21 +440,30 @@ def create_app(
         return p
 
     @app.get("/api/my-antennas/{antenna_id}/geometry")
-    async def user_antenna_geometry(antenna_id: int):
-        p = _write_user_nec(antenna_id)
+    async def user_antenna_geometry(antenna_id: int, request: "Request"):
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        p = _write_user_nec(antenna_id, owner_user_id=hf_user["user_id"])
         parsed = parser.parse_file(p)
         from .visualizer import extract_geometry
         return JSONResponse(extract_geometry(parsed))
 
     @app.post("/api/my-antennas/{antenna_id}/simulate")
-    async def user_antenna_simulate(antenna_id: int):
-        p = _write_user_nec(antenna_id)
+    async def user_antenna_simulate(antenna_id: int, request: "Request"):
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        p = _write_user_nec(antenna_id, owner_user_id=hf_user["user_id"])
         result = simulate(p, base_url=solver_url)
         return JSONResponse(result.to_dict())
 
     @app.post("/api/my-antennas/{antenna_id}/pattern")
-    async def user_antenna_pattern(antenna_id: int, type: str = "elevation"):
-        p = _write_user_nec(antenna_id)
+    async def user_antenna_pattern(antenna_id: int, request: "Request", type: str = "elevation"):
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        p = _write_user_nec(antenna_id, owner_user_id=hf_user["user_id"])
         if type not in ("elevation", "azimuth", "full"):
             raise HTTPException(400, f"Invalid pattern type: {type}")
         from .simulator import simulate_pattern
@@ -424,8 +471,11 @@ def create_app(
         return JSONResponse(result.to_dict())
 
     @app.post("/api/my-antennas/{antenna_id}/sweep")
-    async def user_antenna_sweep(antenna_id: int):
-        p = _write_user_nec(antenna_id)
+    async def user_antenna_sweep(antenna_id: int, request: "Request"):
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        p = _write_user_nec(antenna_id, owner_user_id=hf_user["user_id"])
         parsed = parser.parse_file(p)
         wires = len(parsed.wire_cards)
         n_pts = 21 if wires <= 10 else 11 if wires <= 30 else 7
@@ -436,6 +486,11 @@ def create_app(
     @app.post("/api/my-antennas/upload-pdf")
     async def generate_from_pdf(request: "Request"):
         """Upload PDF, extract text, generate NEC via AI, save to Postgres."""
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        if not hf_user["ai_enabled"]:
+            raise HTTPException(403, "AI features not enabled for your account. Contact admin.")
         from starlette.datastructures import UploadFile
         form = await request.form()
         pdf_file = form.get("pdf")
@@ -490,6 +545,7 @@ def create_app(
                 "usage": result.get("usage"),
                 "pdf_text_preview": result.get("pdf_text", "")[:500],
             },
+            owner_user_id=hf_user["user_id"],
         )
         for k in ("created_at", "updated_at"):
             if hasattr(row.get(k), "isoformat"):
