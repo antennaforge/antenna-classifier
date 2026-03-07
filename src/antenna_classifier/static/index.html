@@ -124,6 +124,9 @@ a { color: var(--accent); text-decoration: none; }
 .plot-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
 .plot-card h4 { font-size: 12px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; }
 .plot-box { width: 100%; min-height: 320px; }
+.pat-btn { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 3px 10px; cursor: pointer; font-size: 11px; text-transform: none; }
+.pat-btn:hover { color: var(--fg); border-color: #58a6ff; }
+.pat-btn.active { color: #58a6ff; border-color: #58a6ff; }
 
 .sim-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .sim-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
@@ -391,7 +394,16 @@ function renderDetail(d) {
         <div class="plot-grid">
           <div class="plot-card"><h4>SWR vs Frequency</h4><div id="plot-swr" class="plot-box"></div></div>
           <div class="plot-card"><h4>Impedance vs Frequency</h4><div id="plot-impedance" class="plot-box"></div></div>
-          <div class="plot-card" style="grid-column:1/-1;"><h4>Radiation Pattern</h4><div id="plot-pattern" class="plot-box" style="min-height:540px;"></div></div>
+          <div class="plot-card" style="grid-column:1/-1;">
+            <h4 style="display:flex;align-items:center;gap:12px;">Radiation Pattern
+              <span id="pattern-buttons" style="display:inline-flex;gap:4px;margin-left:auto;font-size:12px;">
+                <button class="pat-btn" onclick="forcePattern('elevation')" title="Elevation cut (theta sweep at phi=0)">Elevation</button>
+                <button class="pat-btn" onclick="forcePattern('azimuth')" title="Azimuth cut (phi sweep at theta=90)">Azimuth</button>
+                <button class="pat-btn" onclick="forcePattern('full')" title="Full 3D hemisphere">3D</button>
+              </span>
+            </h4>
+            <div id="plot-pattern" class="plot-box" style="min-height:540px;"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -552,11 +564,14 @@ function renderSimulation(sweepData, patData, geoData) {
     }
 
     // Radiation pattern
+    _lastGeoData = geoData;
     const patEl = document.getElementById('plot-pattern');
+    // Clear active state on forced-pattern buttons when showing file's own pattern
+    document.querySelectorAll('.pat-btn').forEach(b => b.classList.remove('active'));
     if (pat?.theta?.length) {
       renderRadiationPattern(pat, geoData);
     } else {
-      patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No radiation pattern — file may lack an RP card</div>';
+      patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No radiation pattern — file may lack an RP card. Use the buttons above to force a pattern.</div>';
     }
   });
 }
@@ -727,6 +742,32 @@ function renderRadiationPattern(pat, geoData) {
       title: { text: '3D Radiation Pattern', font: { color: '#8b949e', size: 12 } },
       margin: { t: 40, b: 10, l: 10, r: 10 },
     }, { responsive: true });
+  }
+}
+
+// ---- Forced pattern request ----
+let _lastGeoData = null;
+async function forcePattern(type) {
+  const filename = _simLoadedFile;
+  if (!filename) return;
+  const patEl = document.getElementById('plot-pattern');
+  patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);"><div class="spinner"></div> Computing ' + esc(type) + ' pattern...</div>';
+  // Highlight active button
+  document.querySelectorAll('.pat-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().startsWith(type.slice(0, 4))));
+  try {
+    const resp = await fetch(`${BASE_URL}/api/pattern/${encodeURIComponent(filename)}?type=${type}`, { method: 'POST' }).then(r => r.json());
+    if (!resp.ok) {
+      patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--red);">Pattern failed: ' + esc(resp.error || 'unknown') + '</div>';
+      return;
+    }
+    const pat = resp.radiation_pattern;
+    if (pat?.theta?.length) {
+      renderRadiationPattern(pat, _lastGeoData);
+    } else {
+      patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No pattern data returned</div>';
+    }
+  } catch (e) {
+    patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--red);">Error: ' + esc(e.message) + '</div>';
   }
 }
 

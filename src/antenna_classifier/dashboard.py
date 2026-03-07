@@ -209,6 +209,20 @@ def create_app(
         result = simulate(p, base_url=solver_url)
         return JSONResponse(result.to_dict())
 
+    @app.post("/api/pattern/{filename:path}")
+    async def run_pattern(filename: str, type: str = "elevation"):
+        """Run a forced radiation pattern (elevation, azimuth, or full 3D)."""
+        _ensure_catalog()
+        rec = _catalog_index.get(filename)
+        if not rec:
+            raise HTTPException(404, f"File not found: {filename}")
+        if type not in ("elevation", "azimuth", "full"):
+            raise HTTPException(400, f"Invalid pattern type: {type}")
+        p = Path(rec["path"])
+        from .simulator import simulate_pattern
+        result = simulate_pattern(p, base_url=solver_url, force_pattern=type)
+        return JSONResponse(result.to_dict())
+
     @app.post("/api/sweep/{filename:path}")
     async def run_sweep(filename: str):
         """Run frequency sweep (SWR + impedance across ±15% of design freq)."""

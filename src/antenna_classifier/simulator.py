@@ -209,19 +209,56 @@ def simulate_impedance(
     )
 
 
+# Standard RP cards for forced pattern types
+_RP_CARDS = {
+    # Elevation cut at phi=0: theta -90..90 in 1° steps
+    "elevation": "RP 0 181 1 1000 -90 0 1 0",
+    # Azimuth cut at theta near horizon: phi 0..360 in 1° steps
+    "azimuth": "RP 0 1 361 1000 90 0 0 1",
+    # Full 3D hemisphere: theta 0..90, phi 0..360 in 2° steps
+    "full": "RP 0 46 181 1000 0 0 2 2",
+}
+
+
+def _inject_rp(nec_text: str, rp_card: str) -> str:
+    """Replace all RP cards in a NEC deck with the given RP card."""
+    lines = nec_text.splitlines()
+    out = []
+    rp_inserted = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped and stripped.split()[0].upper() == "RP":
+            if not rp_inserted:
+                out.append(rp_card)
+                rp_inserted = True
+            # Skip additional RP cards
+            continue
+        # If no RP card found yet and we hit EN, insert before EN
+        if stripped.upper() == "EN" and not rp_inserted:
+            out.append(rp_card)
+            rp_inserted = True
+        out.append(line)
+    return "\n".join(out)
+
+
 def simulate_pattern(
     nec_path: Path | str,
     *,
     base_url: str = DEFAULT_URL,
     z0: float = 50.0,
     timeout: int = 180,
+    force_pattern: str | None = None,
 ) -> SimulationResult:
     """Run far-field pattern simulation via /pattern endpoint.
 
     The /pattern endpoint also returns impedance/SWR when available.
+    If *force_pattern* is set ("elevation", "azimuth", or "full"), the
+    file's RP card(s) are replaced with the requested scan.
     """
     nec_path = Path(nec_path)
     nec_text = nec_path.read_text(errors="replace")
+    if force_pattern and force_pattern in _RP_CARDS:
+        nec_text = _inject_rp(nec_text, _RP_CARDS[force_pattern])
     try:
         resp = _post_json(
             f"{base_url}/pattern",
