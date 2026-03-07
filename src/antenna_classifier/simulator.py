@@ -209,6 +209,29 @@ def simulate_impedance(
     )
 
 
+def simulate_currents(
+    nec_path: Path | str,
+    *,
+    base_url: str = DEFAULT_URL,
+    timeout: int = 120,
+) -> dict:
+    """Fetch per-segment structure currents via /currents endpoint.
+
+    Returns the solver response dict directly (contains by_tag, max_magnitude, etc.)
+    since this data feeds the 3D viewer heat-map and doesn't need dataclass wrapping.
+    """
+    nec_path = Path(nec_path)
+    nec_text = nec_path.read_text(errors="replace")
+    try:
+        return _post_json(
+            f"{base_url}/currents",
+            {"nec_deck": nec_text},
+            timeout=timeout,
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        return {"ok": False, "error": str(e)}
+
+
 # Standard RP cards for forced pattern types
 _RP_CARDS = {
     # Elevation cut at phi=0: theta -90..90 in 1° steps

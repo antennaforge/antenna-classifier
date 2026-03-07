@@ -577,6 +577,88 @@ def sanitize_nec(nec_text: str) -> str:
 
     return "\n".join(deck) + "\n"
 
+
+def parse_currents(txt: str) -> dict:
+    """Parse 'CURRENTS AND LOCATION' section from nec2c output.
+
+    Returns per-segment current data grouped by wire tag, with normalized
+    magnitudes suitable for direct use as a heat-map color scale.
+    """
+    lines = txt.splitlines()
+
+    # Extract frequency from output header
+    freq_mhz = None
+    pat_freq = re.compile(r"FREQUENCY\s*[=:]\s*([\d.Ee+\-]+)\s*MHZ", re.IGNORECASE)
+    for line in lines:
+        m = pat_freq.search(line)
+        if m:
+            try:
+                freq_mhz = float(m.group(1))
+            except ValueError:
+                pass
+            break
+
+    # Find and parse the currents table
+    in_section = False
+    header_skip = 0
+    segments: list[dict] = []
+
+    for line in lines:
+        upper = line.upper()
+        if "CURRENTS AND LOCATION" in upper:
+            in_section = True
+            header_skip = 3  # skip "DISTANCES IN WAVELENGTHS", column header lines
+            continue
+        if in_section:
+            if header_skip > 0:
+                header_skip -= 1
+                continue
+            stripped = line.strip()
+            if not stripped:
+                break  # blank line ends the section
+            # Detect next section header (all-caps with dashes)
+            if stripped.startswith("---") or "RADIATION" in upper or "POWER" in upper:
+                break
+            tokens = stripped.split()
+            if len(tokens) < 10:
+                continue
+            try:
+                seg_no = int(tokens[0])
+                tag_no = int(tokens[1])
+                real_i = float(tokens[6])
+                imag_i = float(tokens[7])
+                mag = float(tokens[8])
+                phase = float(tokens[9])
+                segments.append({
+                    "seg": seg_no, "tag": tag_no,
+                    "real": real_i, "imag": imag_i,
+                    "mag": mag, "phase": phase,
+                })
+            except (ValueError, IndexError):
+                continue
+
+    if not segments:
+        return {"freq_mhz": freq_mhz, "max_magnitude": 0, "n_segments": 0, "by_tag": {}}
+
+    max_mag = max(s["mag"] for s in segments)
+
+    # Group by tag — each tag gets ordered arrays of normalized magnitude + phase
+    by_tag: dict[str, dict] = {}
+    for s in segments:
+        key = str(s["tag"])
+        if key not in by_tag:
+            by_tag[key] = {"magnitudes": [], "phases": []}
+        by_tag[key]["magnitudes"].append(s["mag"] / max_mag if max_mag > 0 else 0.0)
+        by_tag[key]["phases"].append(s["phase"])
+
+    return {
+        "freq_mhz": freq_mhz,
+        "max_magnitude": max_mag,
+        "n_segments": len(segments),
+        "by_tag": by_tag,
+    }
+
+
 def parse_nec_output(txt: str, z0: float = 50.0):
     """Parse NEC2/nec2c textual output to extract impedance (R+jX) vs frequency and compute SWR.
 
@@ -942,6 +1024,53 @@ def run(payload: dict = Body(...)):
     # Cache successful results
     if not dump_raw:
         _cache_put(key, result)
+    return result
+
+
+@app.post("/currents")
+def currents(payload: dict = Body(...)):
+    """Extract per-segment structure currents from nec2c output.
+
+    Returns normalized current magnitudes grouped by wire tag, suitable
+    for heat-map overlay on a 3D wire model.
+    """
+    nec_deck = payload.get("nec_deck") or payload.get("nec") or ""
+    if not nec_deck:
+        return {"ok": False, "error": "missing_nec_deck"}
+
+    sanitized = sanitize_nec(nec_deck)
+
+    key = _cache_key(sanitized, "currents")
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
+    if not _sim_semaphore.acquire(timeout=60):
+        return {"ok": False, "error": "server_busy",
+                "detail": "Too many concurrent simulations; try again shortly"}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            inp, outp = f"{td}/model.nec", f"{td}/out.txt"
+            with open(inp, "w") as f:
+                f.write(sanitized)
+            cmd = [NEC_BIN, f"-i{inp}", f"-o{outp}"]
+            p = subprocess.run(cmd, text=True, capture_output=True, timeout=120)
+            if p.returncode != 0:
+                return {"ok": False, "error": "nec_failed", "stderr": p.stderr}
+            try:
+                with open(outp) as rf:
+                    raw = rf.read()
+            except Exception:
+                raw = ""
+    finally:
+        _sim_semaphore.release()
+
+    parsed = parse_currents(raw)
+    if parsed["n_segments"] == 0:
+        return {"ok": False, "error": "no_currents_found"}
+
+    result = {"ok": True, **parsed}
+    _cache_put(key, result)
     return result
 
 

@@ -267,6 +267,14 @@ def create_app(
         result = simulate_sweep(p, base_url=solver_url, n_points=n_pts)
         return JSONResponse(result.to_dict())
 
+    @app.post("/api/currents/{filename:path}")
+    async def run_currents(filename: str):
+        """Extract per-segment structure currents for 3D heat-map overlay."""
+        p = _find_nec_file(filename)
+        from .simulator import simulate_currents
+        result = simulate_currents(p, base_url=solver_url)
+        return JSONResponse(result)
+
     @app.get("/api/types")
     async def get_types():
         """List all known antenna types."""
@@ -482,6 +490,16 @@ def create_app(
         from .simulator import simulate_sweep
         result = simulate_sweep(p, base_url=solver_url, n_points=n_pts)
         return JSONResponse(result.to_dict())
+
+    @app.post("/api/my-antennas/{antenna_id}/currents")
+    async def user_antenna_currents(antenna_id: int, request: "Request"):
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        p = _write_user_nec(antenna_id, owner_user_id=hf_user["user_id"])
+        from .simulator import simulate_currents
+        result = simulate_currents(p, base_url=solver_url)
+        return JSONResponse(result)
 
     @app.post("/api/my-antennas/upload-pdf")
     async def generate_from_pdf(request: "Request"):

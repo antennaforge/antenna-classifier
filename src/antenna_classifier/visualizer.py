@@ -171,37 +171,94 @@ def extract_geometry(parsed: ParseResult) -> dict[str, Any]:
                         ))
                 wires.extend(new_wires)
 
-    # Mark excitations and loads
+    # Collect excitations, loads, transmission lines, frequency, ground
+    excitations: list[dict] = []
+    loads: list[dict] = []
+    transmission_lines: list[dict] = []
+    frequency: float | None = None
+    ground_type = "none"
+    ground_params: dict = {}
+
+    _LD_TYPE_NAMES = {
+        0: "series RLC",
+        1: "parallel RLC",
+        2: "series RLC (per length)",
+        3: "parallel RLC (per length)",
+        4: "impedance",
+        5: "wire conductivity",
+    }
+
     for card in parsed.cards:
-        if card.card_type == "EX":
-            ex_type = card.labeled_params.get("exType", 0)
+        ct = card.card_type
+        p = card.labeled_params
+
+        if ct == "EX":
+            ex_type = p.get("exType", 0)
             if ex_type in (0, 5):
-                tag = card.labeled_params.get("tag", 0)
-                seg = card.labeled_params.get("segment", 0)
+                tag = p.get("tag", 0)
+                seg = p.get("segment", 0)
+                v_real = _to_float(p.get("vReal", 0.0), 0.0) or 0.0
+                v_imag = _to_float(p.get("vImag", 0.0), 0.0) or 0.0
                 for w in wires:
                     if w.tag == tag:
                         w.is_excited = True
                         w.excited_segments.append(seg)
-        elif card.card_type == "LD":
-            tag = card.labeled_params.get("tag", 0)
-            s_start = card.labeled_params.get("segStart", 0)
-            s_end = card.labeled_params.get("segEnd", 0)
+                excitations.append({
+                    "tag": tag, "segment": seg,
+                    "v_real": round(v_real, 6), "v_imag": round(v_imag, 6),
+                })
+
+        elif ct == "LD":
+            tag = p.get("tag", 0)
+            ld_type = p.get("ldType", 0)
+            s_start = p.get("segStart", 0)
+            s_end = p.get("segEnd", 0)
+            zlr = _to_float(p.get("zlr", 0.0), 0.0) or 0.0
+            zli = _to_float(p.get("zli", 0.0), 0.0) or 0.0
+            zlc = _to_float(p.get("zlc", 0.0), 0.0) or 0.0
             for w in wires:
                 if w.tag == tag or tag == 0:
                     w.is_loaded = True
                     w.loaded_segments.extend(range(s_start, max(s_end, s_start) + 1))
+            loads.append({
+                "ld_type": ld_type,
+                "type_name": _LD_TYPE_NAMES.get(ld_type, f"type {ld_type}"),
+                "tag": tag,
+                "seg_start": s_start, "seg_end": s_end,
+                "zlr": zlr, "zli": zli, "zlc": zlc,
+            })
 
-    # Ground type
-    ground_type = "none"
-    for card in parsed.cards:
-        if card.card_type == "GN":
-            gt = card.labeled_params.get("groundType", -1)
+        elif ct == "TL":
+            tag1 = p.get("tag1", 0)
+            seg1 = p.get("seg1", 0)
+            tag2 = p.get("tag2", 0)
+            seg2 = p.get("seg2", 0)
+            z0 = _to_float(p.get("z0", 0.0), 0.0) or 0.0
+            tl_len = _to_float(p.get("length", 0.0), 0.0) or 0.0
+            transmission_lines.append({
+                "tag1": tag1, "seg1": seg1,
+                "tag2": tag2, "seg2": seg2,
+                "z0": round(z0, 2), "length": round(tl_len, 6),
+            })
+
+        elif ct == "FR":
+            freq_val = _to_float(p.get("freq", 0.0), 0.0)
+            if freq_val:
+                frequency = round(freq_val, 6)
+
+        elif ct == "GN":
+            gt = p.get("groundType", -1)
             if gt == -1:
                 ground_type = "free_space"
             elif gt == 1:
                 ground_type = "perfect"
             else:
                 ground_type = "real"
+            ground_params = {
+                "type_code": gt,
+                "epsr": _to_float(p.get("epsr", 0.0), 0.0) or 0.0,
+                "sigma": _to_float(p.get("sigma", 0.0), 0.0) or 0.0,
+            }
 
     # Compute bounds
     all_pts = [pt for w in wires for pt in w.points]
@@ -214,6 +271,30 @@ def extract_geometry(parsed: ParseResult) -> dict[str, Any]:
     else:
         bounds_min = [0, 0, 0]
         bounds_max = [1, 1, 1]
+
+    # Compute wire lengths and inter-wire spacing
+    wire_info: list[dict] = []
+    for w in wires:
+        length = 0.0
+        for i in range(len(w.points) - 1):
+            dx = w.points[i + 1][0] - w.points[i][0]
+            dy = w.points[i + 1][1] - w.points[i][1]
+            dz = w.points[i + 1][2] - w.points[i][2]
+            length += math.sqrt(dx * dx + dy * dy + dz * dz)
+        midpt = _wire_midpoint(w.points)
+        wire_info.append({"tag": w.tag, "length": round(length, 4), "midpoint": midpt})
+
+    spacings: list[dict] = []
+    for i in range(len(wire_info)):
+        for j in range(i + 1, len(wire_info)):
+            m1 = wire_info[i]["midpoint"]
+            m2 = wire_info[j]["midpoint"]
+            d = math.sqrt(sum((a - b) ** 2 for a, b in zip(m1, m2)))
+            spacings.append({
+                "wire_a": wire_info[i]["tag"],
+                "wire_b": wire_info[j]["tag"],
+                "distance": round(d, 4),
+            })
 
     return {
         "wires": [
@@ -230,11 +311,30 @@ def extract_geometry(parsed: ParseResult) -> dict[str, Any]:
             for w in wires
         ],
         "ground_type": ground_type,
+        "ground_params": ground_params,
+        "frequency": frequency,
+        "excitations": excitations,
+        "transmission_lines": transmission_lines,
+        "loads": loads,
+        "wire_dimensions": wire_info,
+        "spacings": spacings,
         "bounds": {
             "min": [round(v, 6) for v in bounds_min],
             "max": [round(v, 6) for v in bounds_max],
         },
     }
+
+
+def _wire_midpoint(points: list[list[float]]) -> list[float]:
+    """Return the midpoint of a wire defined by a list of points."""
+    if not points:
+        return [0.0, 0.0, 0.0]
+    n = len(points)
+    return [
+        round(sum(p[0] for p in points) / n, 6),
+        round(sum(p[1] for p in points) / n, 6),
+        round(sum(p[2] for p in points) / n, 6),
+    ]
 
 
 def _rotate_translate(
