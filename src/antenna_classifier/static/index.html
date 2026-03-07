@@ -495,8 +495,10 @@ function renderDetail(d) {
 
     <!-- 3D View tab -->
     <div class="tab-content active" id="tab-3d">
-      <div id="viewer3d-container" style="width:100%;height:500px;background:#0d1117;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative;">
-        <div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D view...</div>
+      <div style="position:relative;">
+        <div id="viewer3d-container" style="width:100%;height:500px;background:#0d1117;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative;">
+          <div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D view...</div>
+        </div>
         <button id="btn-currents" onclick="toggleCurrentOverlay()" style="position:absolute;top:10px;right:10px;z-index:10;background:rgba(22,27,34,0.85);border:1px solid var(--border);color:var(--accent);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;backdrop-filter:blur(4px);display:none;">&#x1f321; Show Currents</button>
         <div id="currents-legend" style="display:none;position:absolute;bottom:14px;right:14px;z-index:10;background:rgba(22,27,34,0.85);border:1px solid var(--border);border-radius:6px;padding:8px 10px;backdrop-filter:blur(4px);font-size:11px;color:var(--muted);">
           <div style="margin-bottom:4px;text-align:center;color:var(--text);font-weight:600;">Current</div>
@@ -711,9 +713,14 @@ function renderSimulation(sweepData, patData, geoData) {
     // Clear active state on forced-pattern buttons when showing file's own pattern
     document.querySelectorAll('.pat-btn').forEach(b => b.classList.remove('active'));
     if (pat?.theta?.length) {
-      renderRadiationPattern(pat, geoData);
+      const validGains = (pat.gain_db || []).filter(g => g > -900);
+      if (validGains.length) {
+        renderRadiationPattern(pat, geoData);
+      } else {
+        patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No valid gain data \u2014 try forcing a pattern with the buttons above.</div>';
+      }
     } else {
-      patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No radiation pattern — file may lack an RP card. Use the buttons above to force a pattern.</div>';
+      patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No radiation pattern \u2014 file may lack an RP card. Use the buttons above to force a pattern.</div>';
     }
   });
 }
@@ -920,7 +927,14 @@ async function forcePattern(type) {
     }
     const pat = resp.radiation_pattern;
     if (pat?.theta?.length) {
+      // Check for degenerate data (all gains invalid)
+      const validGains = (pat.gain_db || []).filter(g => g > -900);
+      if (!validGains.length) {
+        patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No valid gain data — NEC solver could not compute radiation for this file.</div>';
+        return;
+      }
       _lastPatData = pat;
+      patEl.innerHTML = ''; // clear spinner before Plotly render
       await renderRadiationPattern(pat, _lastGeoData);
     } else {
       patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No pattern data returned</div>';
@@ -1087,8 +1101,10 @@ function renderUserAntennaDetail(d) {
     </div>
 
     <div class="tab-content active" id="tab-user-3d">
-      <div id="viewer3d-container" style="width:100%;height:500px;background:#0d1117;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative;">
-        <div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D view...</div>
+      <div style="position:relative;">
+        <div id="viewer3d-container" style="width:100%;height:500px;background:#0d1117;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative;">
+          <div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D view...</div>
+        </div>
         <button id="btn-user-currents" onclick="toggleUserCurrentOverlay()" style="position:absolute;top:10px;right:10px;z-index:10;background:rgba(22,27,34,0.85);border:1px solid var(--border);color:var(--accent);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;backdrop-filter:blur(4px);display:none;">&#x1f321; Show Currents</button>
         <div id="user-currents-legend" style="display:none;position:absolute;bottom:14px;right:14px;z-index:10;background:rgba(22,27,34,0.85);border:1px solid var(--border);border-radius:6px;padding:8px 10px;backdrop-filter:blur(4px);font-size:11px;color:var(--muted);">
           <div style="margin-bottom:4px;text-align:center;color:var(--text);font-weight:600;">Current</div>
@@ -1254,7 +1270,13 @@ async function forceUserPattern(type) {
     const resp = await fetch(`${BASE_URL}/api/my-antennas/${activeUserAntenna}/pattern?type=${type}`, { method: 'POST' }).then(r => r.json());
     if (!resp.ok) { patEl.innerHTML = '<div style="color:var(--red);padding:20px;">Failed: ' + esc(resp.error) + '</div>'; return; }
     const pat = resp.radiation_pattern;
-    if (pat?.theta?.length) { _lastPatData = pat; await renderRadiationPattern(pat, _lastGeoData); }
+    if (pat?.theta?.length) {
+      const validGains = (pat.gain_db || []).filter(g => g > -900);
+      if (!validGains.length) { patEl.innerHTML = '<div style="padding:20px;color:var(--muted);">No valid gain data</div>'; return; }
+      _lastPatData = pat;
+      patEl.innerHTML = ''; // clear spinner before Plotly render
+      await renderRadiationPattern(pat, _lastGeoData);
+    }
     else patEl.innerHTML = '<div style="padding:20px;color:var(--muted);">No pattern data</div>';
   } catch (e) { patEl.innerHTML = '<div style="color:var(--red);padding:20px;">Error: ' + esc(e.message) + '</div>'; }
 }
