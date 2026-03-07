@@ -179,7 +179,7 @@ a { color: var(--accent); text-decoration: none; }
 .my-antenna-item .meta { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
 .my-antenna-actions { padding: 8px 16px; display: flex; gap: 6px; }
 .btn-sm { padding: 5px 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; font-weight: 600; }
-.btn-ai { background: linear-gradient(135deg, #58a6ff, #bc8cff); color: #fff; border: none; }
+.btn-ai { background: var(--accent); color: #fff; border: none; }
 .btn-ai:hover { opacity: 0.85; }
 .btn-pdf { background: var(--surface); color: var(--text); }
 .btn-pdf:hover { border-color: #58a6ff; }
@@ -224,9 +224,9 @@ a { color: var(--accent); text-decoration: none; }
         <span class="toggle-arrow" id="my-antenna-arrow">&#x25B6;</span>
       </div>
       <div class="my-antennas-body" id="my-antennas-body">
-        <div class="my-antenna-actions">
-          <button class="btn-sm btn-ai" onclick="openGenerateModal()">+ AI Generate</button>
-          <button class="btn-sm btn-pdf" onclick="openPdfModal()">&#128196; From PDF</button>
+        <div class="my-antenna-actions" id="my-antenna-actions" style="display:none;">
+          <button class="btn-sm btn-ai" onclick="openGenerateModal()">+ Design New</button>
+          <button class="btn-sm btn-pdf" onclick="openPdfModal()">&#128196; Import PDF</button>
         </div>
         <div id="my-antenna-list"></div>
       </div>
@@ -267,11 +267,23 @@ window.__BASE_URL = BASE_URL;
 let catalog = [];
 let summary = {};
 let activeFile = null;
+let currentUser = null;
 
 // ---- Boot ----
 document.addEventListener('DOMContentLoaded', async () => {
+  await checkCurrentUser();
   await loadCatalog();
 });
+
+async function checkCurrentUser() {
+  try {
+    const resp = await fetch(`${BASE_URL}/api/me`).then(r => r.json());
+    if (resp.authenticated && resp.ai_enabled) {
+      currentUser = resp;
+      document.getElementById('my-antenna-actions').style.display = '';
+    }
+  } catch {}
+}
 
 async function loadCatalog() {
   const [catResp, sumResp] = await Promise.all([
@@ -944,7 +956,10 @@ function renderMyAntennaList() {
   document.getElementById('my-antenna-count').textContent = myAntennas.length ? `(${myAntennas.length})` : '';
   const el = document.getElementById('my-antenna-list');
   if (!myAntennas.length) {
-    el.innerHTML = '<div style="padding:12px 16px;color:var(--muted);font-size:12px;">No antennas yet. Use AI Generate to create one!</div>';
+    const hint = currentUser && currentUser.ai_enabled
+      ? 'No antennas yet. Use Design New to create one!'
+      : 'No antennas yet. Ask an admin to enable antenna design for your account.';
+    el.innerHTML = `<div style="padding:12px 16px;color:var(--muted);font-size:12px;">${hint}</div>`;
     return;
   }
   el.innerHTML = myAntennas.map(a => `
@@ -1132,6 +1147,7 @@ async function deleteUserAntenna(id) {
 
 // ---- Modals ----
 function openGenerateModal() {
+  if (!currentUser || !currentUser.ai_enabled) return;
   const sel = document.getElementById('gen-type');
   if (!sel.options.length || sel.options.length === 1) {
     // Populate types from classifier
@@ -1145,6 +1161,7 @@ function openGenerateModal() {
 }
 
 function openPdfModal() {
+  if (!currentUser || !currentUser.ai_enabled) return;
   document.getElementById('pdf-status').textContent = '';
   document.getElementById('pdf-modal').classList.add('open');
 }
@@ -1159,7 +1176,7 @@ async function submitGenerate() {
   const name = document.getElementById('gen-name').value.trim();
   if (!name) { status.innerHTML = '<span style="color:var(--red);">Name is required</span>'; return; }
   btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Generating NEC with AI... this may take 15-30 seconds';
+  status.innerHTML = '<div class="spinner"></div> Designing antenna... this may take 15-30 seconds';
   try {
     const body = {
       name,
@@ -1197,7 +1214,7 @@ async function submitPdf() {
   const fileInput = document.getElementById('pdf-file');
   if (!fileInput.files.length) { status.innerHTML = '<span style="color:var(--red);">Select a PDF file</span>'; return; }
   btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Uploading & generating... this may take 30-60 seconds';
+  status.innerHTML = '<div class="spinner"></div> Uploading & designing... this may take 30-60 seconds';
   try {
     const fd = new FormData();
     fd.append('pdf', fileInput.files[0]);
@@ -1238,7 +1255,7 @@ function esc(s) {
 <!-- Generate Modal -->
 <div class="modal-overlay" id="generate-modal">
   <div class="modal">
-    <h2>&#x2728; Generate Antenna with AI</h2>
+    <h2>&#x2728; Design New Antenna</h2>
     <label>Name *</label>
     <input id="gen-name" placeholder="e.g. My 20m 3-element Yagi">
     <label>Antenna Type</label>
@@ -1256,7 +1273,7 @@ function esc(s) {
     <div class="modal-status" id="gen-status"></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModals()">Cancel</button>
-      <button class="btn btn-ai" id="gen-submit" onclick="submitGenerate()">Generate</button>
+      <button class="btn btn-ai" id="gen-submit" onclick="submitGenerate()">Design</button>
     </div>
   </div>
 </div>
@@ -1264,17 +1281,17 @@ function esc(s) {
 <!-- PDF Upload Modal -->
 <div class="modal-overlay" id="pdf-modal">
   <div class="modal">
-    <h2>&#128196; Generate from PDF</h2>
+    <h2>&#128196; Import from PDF</h2>
     <label>Name</label>
     <input id="pdf-name" placeholder="e.g. Cebik 10m Phased Array">
     <label>PDF File *</label>
     <input id="pdf-file" type="file" accept=".pdf">
     <label>Additional Instructions</label>
-    <textarea id="pdf-desc" placeholder="Optional: any special notes for the AI"></textarea>
+    <textarea id="pdf-desc" placeholder="Optional: any special notes about the design"></textarea>
     <div class="modal-status" id="pdf-status"></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModals()">Cancel</button>
-      <button class="btn btn-ai" id="pdf-submit" onclick="submitPdf()">Upload &amp; Generate</button>
+      <button class="btn btn-ai" id="pdf-submit" onclick="submitPdf()">Upload &amp; Design</button>
     </div>
   </div>
 </div>
