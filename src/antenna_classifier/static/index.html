@@ -391,7 +391,7 @@ function renderDetail(d) {
         <div class="plot-grid">
           <div class="plot-card"><h4>SWR vs Frequency</h4><div id="plot-swr" class="plot-box"></div></div>
           <div class="plot-card"><h4>Impedance vs Frequency</h4><div id="plot-impedance" class="plot-box"></div></div>
-          <div class="plot-card" style="grid-column:1/-1;"><h4>Radiation Pattern</h4><div id="plot-pattern" class="plot-box"></div></div>
+          <div class="plot-card" style="grid-column:1/-1;"><h4>Radiation Pattern</h4><div id="plot-pattern" class="plot-box" style="min-height:540px;"></div></div>
         </div>
       </div>
     </div>
@@ -460,10 +460,11 @@ async function loadSimulation(filename) {
   content.style.display = 'none';
 
   try {
-    // Run pattern simulation and frequency sweep in parallel
-    const [patResp, sweepResp] = await Promise.all([
+    // Run pattern simulation, frequency sweep, and geometry fetch in parallel
+    const [patResp, sweepResp, geoResp] = await Promise.all([
       fetch(`${BASE_URL}/api/simulate/${encodeURIComponent(filename)}`, { method: 'POST' }).then(r => r.json()),
       fetch(`${BASE_URL}/api/sweep/${encodeURIComponent(filename)}`, { method: 'POST' }).then(r => r.json()),
+      fetch(`${BASE_URL}/api/geometry/${encodeURIComponent(filename)}`).then(r => r.json()).catch(() => null),
     ]);
     loading.style.display = 'none';
 
@@ -487,7 +488,7 @@ async function loadSimulation(filename) {
     // Use sweep data for SWR/impedance (multi-point), pattern data for radiation
     const sweepData = sweepResp.ok ? sweepResp : patResp;
     const patData = patResp.ok ? patResp : null;
-    renderSimulation(sweepData, patData);
+    renderSimulation(sweepData, patData, geoResp);
     content.style.display = 'block';
   } catch (err) {
     loading.style.display = 'none';
@@ -497,7 +498,7 @@ async function loadSimulation(filename) {
   }
 }
 
-function renderSimulation(sweepData, patData) {
+function renderSimulation(sweepData, patData, geoData) {
   // Summary stats
   const stats = [];
   const swr = sweepData.swr_sweep;
@@ -553,14 +554,14 @@ function renderSimulation(sweepData, patData) {
     // Radiation pattern
     const patEl = document.getElementById('plot-pattern');
     if (pat?.theta?.length) {
-      renderRadiationPattern(pat);
+      renderRadiationPattern(pat, geoData);
     } else {
       patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No radiation pattern — file may lack an RP card</div>';
     }
   });
 }
 
-function renderRadiationPattern(pat) {
+function renderRadiationPattern(pat, geoData) {
   const uniqueTheta = [...new Set(pat.theta)].sort((a,b) => a-b);
   const uniquePhi = [...new Set(pat.phi)].sort((a,b) => a-b);
   const colors = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#bc8cff'];
@@ -669,7 +670,7 @@ function renderRadiationPattern(pat) {
       }
       xs.push(xr); ys.push(yr); zs.push(zr); colors.push(cr);
     }
-    Plotly.newPlot('plot-pattern', [{
+    const traces3d = [{
       type: 'surface', x: xs, y: ys, z: zs,
       surfacecolor: colors,
       colorscale: [
@@ -679,7 +680,40 @@ function renderRadiationPattern(pat) {
       colorbar: { title: 'dBi', tickfont: { color: '#8b949e' }, titlefont: { color: '#8b949e' } },
       showscale: true,
       lighting: { ambient: 0.6, diffuse: 0.5, specular: 0.2 },
-    }], {
+    }];
+    // Overlay antenna geometry if available
+    if (geoData?.wires?.length) {
+      // Find max pattern radius for scaling
+      let maxR = 0;
+      for (let i = 0; i < nT; i++) for (let j = 0; j < nP; j++) {
+        const g = gainMatrix[i][j] > -900 ? gainMatrix[i][j] - minG : 0;
+        if (g > maxR) maxR = g;
+      }
+      // Find max antenna extent
+      let maxExt = 0;
+      for (const w of geoData.wires) {
+        for (const pt of w.points) {
+          for (const c of pt) if (Math.abs(c) > maxExt) maxExt = Math.abs(c);
+        }
+      }
+      const scale = maxExt > 0 ? (maxR * 0.25) / maxExt : 1;
+      for (const w of geoData.wires) {
+        const wx = [], wy = [], wz = [];
+        for (const pt of w.points) {
+          wx.push(pt[0] * scale);
+          wy.push(pt[1] * scale);
+          wz.push(pt[2] * scale);
+        }
+        traces3d.push({
+          type: 'scatter3d', mode: 'lines',
+          x: wx, y: wy, z: wz,
+          line: { color: w.is_excited ? '#f0883e' : '#8b949e', width: w.is_excited ? 5 : 3 },
+          name: w.is_excited ? 'Driven' : `Wire ${w.tag}`,
+          showlegend: false, hoverinfo: 'name',
+        });
+      }
+    }
+    Plotly.newPlot('plot-pattern', traces3d, {
       paper_bgcolor: 'transparent',
       scene: {
         bgcolor: '#0d1117',
