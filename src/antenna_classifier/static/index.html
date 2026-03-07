@@ -205,6 +205,43 @@ a { color: var(--accent); text-decoration: none; }
 .modal textarea { resize: vertical; min-height: 60px; font-family: inherit; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 .modal-status { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
+
+/* Site Navigation Dropdown */
+.site-nav { position: relative; margin-left: 16px; }
+.site-nav-btn {
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.site-nav-btn:hover { border-color: var(--accent); background: var(--surface); }
+.site-nav-btn .nav-arrow { font-size: 10px; transition: transform 0.15s; }
+.site-nav-btn.open .nav-arrow { transform: rotate(180deg); }
+.site-nav-dropdown {
+  display: none; position: absolute; top: calc(100% + 6px); right: 0;
+  min-width: 220px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 200;
+  padding: 6px 0; animation: navFadeIn 0.12s ease-out;
+}
+.site-nav-dropdown.open { display: block; }
+@keyframes navFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.site-nav-section { padding: 6px 12px 2px; font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+.site-nav-link {
+  display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 13px;
+  color: var(--text); text-decoration: none; transition: background 0.1s;
+}
+.site-nav-link:hover { background: rgba(88,166,255,0.08); }
+.site-nav-link.active { color: var(--accent); background: rgba(88,166,255,0.1); }
+.site-nav-link .nav-icon { width: 18px; text-align: center; }
+.site-nav-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.site-nav-user {
+  padding: 8px 14px; font-size: 12px; color: var(--muted);
+  border-top: 1px solid var(--border); margin-top: 2px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.site-nav-user .callsign { color: var(--accent); font-weight: 600; }
+.site-nav-user a { color: var(--red); font-size: 12px; text-decoration: none; }
+.site-nav-user a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -212,6 +249,12 @@ a { color: var(--accent); text-decoration: none; }
 <div class="header">
   <h1>&#x1F4E1; Antenna Classifier</h1>
   <div class="stats" id="header-stats"></div>
+  <div class="site-nav" id="site-nav">
+    <button class="site-nav-btn" onclick="toggleSiteNav()" id="site-nav-btn">
+      🌍 Navigate <span class="nav-arrow">▾</span>
+    </button>
+    <div class="site-nav-dropdown" id="site-nav-dropdown"></div>
+  </div>
 </div>
 
 <div class="container">
@@ -278,12 +321,62 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function checkCurrentUser() {
   try {
     const resp = await fetch(`${BASE_URL}/api/me`).then(r => r.json());
-    if (resp.authenticated && resp.ai_enabled) {
-      currentUser = resp;
-      document.getElementById('my-antenna-actions').style.display = '';
+    if (resp.authenticated) {
+      if (resp.ai_enabled) {
+        currentUser = resp;
+        document.getElementById('my-antenna-actions').style.display = '';
+      }
+      buildSiteNav(resp);
+    } else {
+      buildSiteNav(null);
     }
-  } catch {}
+  } catch {
+    buildSiteNav(null);
+  }
 }
+
+// ---- Site Navigation ----
+function buildSiteNav(user) {
+  const dd = document.getElementById('site-nav-dropdown');
+  const isAuth = user && user.authenticated;
+  let html = '';
+  html += '<div class="site-nav-section">Main</div>';
+  html += '<a class="site-nav-link" href="/"><span class="nav-icon">📡</span>Dashboard</a>';
+  if (isAuth) {
+    html += '<div class="site-nav-section">Analytics</div>';
+    html += '<a class="site-nav-link" href="/operator"><span class="nav-icon">🧭</span>Operator</a>';
+    html += '<a class="site-nav-link" href="/antenna-performance"><span class="nav-icon">📡</span>Antenna Performance</a>';
+    html += '<div class="site-nav-section">Tools</div>';
+    html += '<a class="site-nav-link active" href="/antenna/"><span class="nav-icon">📐</span>My Antenna</a>';
+    html += '<div class="site-nav-section">Account</div>';
+    html += '<a class="site-nav-link" href="/profile"><span class="nav-icon">👤</span>Profile</a>';
+    html += '<a class="site-nav-link" href="/admin"><span class="nav-icon">🔐</span>Admin</a>';
+    html += '<div class="site-nav-user">';
+    html += '<span class="callsign">' + (user.callsign || '') + '</span>';
+    html += '<a href="/logout">Logout</a>';
+    html += '</div>';
+  } else {
+    html += '<div class="site-nav-sep"></div>';
+    html += '<a class="site-nav-link" href="/login"><span class="nav-icon">🔑</span>Login</a>';
+  }
+  dd.innerHTML = html;
+}
+
+function toggleSiteNav() {
+  const btn = document.getElementById('site-nav-btn');
+  const dd = document.getElementById('site-nav-dropdown');
+  const isOpen = dd.classList.toggle('open');
+  btn.classList.toggle('open', isOpen);
+}
+
+// Close site nav when clicking outside
+document.addEventListener('click', function(e) {
+  const nav = document.getElementById('site-nav');
+  if (nav && !nav.contains(e.target)) {
+    document.getElementById('site-nav-dropdown').classList.remove('open');
+    document.getElementById('site-nav-btn').classList.remove('open');
+  }
+});
 
 async function loadCatalog() {
   const [catResp, sumResp] = await Promise.all([
