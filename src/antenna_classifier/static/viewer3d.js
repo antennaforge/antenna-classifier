@@ -220,12 +220,6 @@ export function init(containerId, geometry) {
             '\nV = ' + vMag + ' \u2220' + vPhase + '\u00b0' +
             '\n(' + ex.v_real + ' + j' + ex.v_imag + ')',
     });
-
-    // CSS label
-    const lbl = makeLabel('EX', '#ff4444', 10);
-    lbl.position.copy(nec(pos));
-    lbl.position.y += markerSize * 2;
-    _scene.add(lbl);
   }
 
   // Transmission line markers + dashed connector
@@ -255,13 +249,6 @@ export function init(containerId, geometry) {
     const dashLine = new THREE.Line(dashGeo, dashMat);
     dashLine.computeLineDistances();
     _scene.add(dashLine);
-
-    // TL label at midpoint
-    const tlMid = [(pos1[0] + pos2[0]) / 2, (pos1[1] + pos2[1]) / 2, (pos1[2] + pos2[2]) / 2];
-    const tlLbl = makeLabel('TL ' + tl.z0 + '\u03a9', '#d29922', 10);
-    tlLbl.position.copy(nec(tlMid));
-    tlLbl.position.y += sceneSize * 0.03;
-    _scene.add(tlLbl);
   }
 
   /* ---- 4. Load markers ---- */
@@ -329,20 +316,22 @@ export function init(containerId, geometry) {
   const wireInfos = geometry.wire_dimensions || [];
   const spacings = geometry.spacings || [];
 
-  // Wire lengths — annotate each wire
+  // Wire lengths — annotate each wire (hover tooltip on invisible mesh)
   for (const wi of wireInfos) {
     const wire = wireMap[wi.tag];
     if (!wire || wire.points.length < 2) continue;
     const p1 = wire.points[0], p2 = wire.points[wire.points.length - 1];
-    addDimensionLine(p1, p2, wi.length.toFixed(2) + ' m', dimY);
+    const dimHover = addDimensionLine(p1, p2, wi.length.toFixed(2) + ' m', dimY);
+    if (dimHover) hoverables.push(dimHover);
   }
 
-  // Spacings — annotate distance between wire midpoints
+  // Spacings — annotate distance between wire midpoints (hover tooltip)
   for (const sp of spacings) {
     const w1 = wireInfos.find(function(wi) { return wi.tag === sp.wire_a; });
     const w2 = wireInfos.find(function(wi) { return wi.tag === sp.wire_b; });
     if (!w1 || !w2) continue;
-    addSpacingLine(w1.midpoint, w2.midpoint, sp.distance.toFixed(2) + ' m');
+    const spHover = addSpacingLine(w1.midpoint, w2.midpoint, sp.distance.toFixed(2) + ' m');
+    if (spHover) hoverables.push(spHover);
   }
 
   /* ---- 7. Grid ---- */
@@ -536,10 +525,19 @@ function addDimensionLine(necPt1, necPt2, label, offsetY) {
     _scene.add(new THREE.Line(lGeo, leader));
   }
 
-  // Label at midpoint
-  var lbl = makeLabel(label, '#e8ecf4', 10);
-  lbl.position.lerpVectors(p1, p2, 0.5);
-  _scene.add(lbl);
+  // Invisible hover mesh at midpoint for tooltip
+  var dir = new THREE.Vector3().subVectors(p2, p1);
+  var len = dir.length();
+  if (len < 1e-10) return null;
+  var hitR = Math.max(len * 0.03, 0.05);
+  var hitMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(hitR, hitR, len, 4),
+    new THREE.MeshBasicMaterial({ visible: false }),
+  );
+  hitMesh.position.lerpVectors(p1, p2, 0.5);
+  hitMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  _scene.add(hitMesh);
+  return { mesh: hitMesh, text: label };
 }
 
 function addSpacingLine(mid1, mid2, label) {
@@ -554,10 +552,19 @@ function addSpacingLine(mid1, mid2, label) {
   line.computeLineDistances();
   _scene.add(line);
 
-  var lbl = makeLabel('\u2194 ' + label, '#58a6ff', 10);
-  lbl.position.lerpVectors(p1, p2, 0.5);
-  lbl.position.y += 0.3;
-  _scene.add(lbl);
+  // Invisible hover mesh for tooltip
+  var dir = new THREE.Vector3().subVectors(p2, p1);
+  var len = dir.length();
+  if (len < 1e-10) return null;
+  var hitR = Math.max(len * 0.03, 0.05);
+  var hitMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(hitR, hitR, len, 4),
+    new THREE.MeshBasicMaterial({ visible: false }),
+  );
+  hitMesh.position.lerpVectors(p1, p2, 0.5);
+  hitMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  _scene.add(hitMesh);
+  return { mesh: hitMesh, text: '\u2194 ' + label };
 }
 
 
