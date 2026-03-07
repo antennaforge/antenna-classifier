@@ -194,6 +194,26 @@ class TestStructuralClassification:
         assert result.antenna_type == "yagi"
         assert result.confidence >= 0.5
 
+    def test_yagi_stepped_diameter(self):
+        """Stepped-diameter Yagi: 10 GW wires (5 per element) should merge to 2 elements."""
+        nec = (
+            "CM 2el stepped-dia Yagi\nCE\n"
+            "GW 1,5,-2.603,0,0,-1.524,0,0,.008\n"
+            "GW 2,3,-1.524,0,0,-1.041,0,0,.010\n"
+            "GW 3,9,-1.041,0,0,1.041,0,0,.010\n"
+            "GW 4,3,1.041,0,0,1.524,0,0,.010\n"
+            "GW 5,5,1.524,0,0,2.603,0,0,.008\n"
+            "GW 6,5,-2.411,.856,0,-1.524,.856,0,.008\n"
+            "GW 7,3,-1.524,.856,0,-1.041,.856,0,.010\n"
+            "GW 8,9,-1.041,.856,0,1.041,.856,0,.010\n"
+            "GW 9,3,1.041,.856,0,1.524,.856,0,.010\n"
+            "GW 10,5,1.524,.856,0,2.411,.856,0,.008\n"
+            "GE 0\nEX 0,3,5,0,1,0\nFR 0,1,0,0,29.\nGN -1\nEN"
+        )
+        result = classify(parse_text(nec))
+        assert result.antenna_type == "yagi"
+        assert result.element_count == 2
+
     def test_phased_array_multi_ex(self):
         result = classify(parse_text(_phased_nec()))
         assert result.antenna_type == "phased_array"

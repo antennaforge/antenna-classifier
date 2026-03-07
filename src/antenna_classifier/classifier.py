@@ -263,6 +263,10 @@ class _AnalysisContext:
             if isinstance(tag, int):
                 tag_map.setdefault(tag, []).append(w)
         self.wire_groups = [_WireGroup(tag=t, wires=ws) for t, ws in sorted(tag_map.items())]
+
+        # Merge wire groups that are collinear and connected end-to-end
+        # (stepped-diameter elements use separate tags per diameter section)
+        self._merge_connected_collinear()
         self.n_wire_groups = len(self.wire_groups)
 
         # Frequency — collect all FR entries
@@ -325,6 +329,77 @@ class _AnalysisContext:
 
         # Comment text
         self.comment_text = self.parsed.comment_text.lower()
+
+    def _merge_connected_collinear(self) -> None:
+        """Merge wire groups connected end-to-end and collinear.
+
+        Stepped-diameter elements use separate GW tags per diameter section.
+        This merges them into single physical elements via union-find.
+        """
+        n = len(self.wire_groups)
+        if n < 2:
+            return
+
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        def _wire_endpoints(group: _WireGroup) -> list[tuple[float, float, float]]:
+            pts: list[tuple[float, float, float]] = []
+            for w in group.wires:
+                lp = w.labeled_params
+                coords = [lp.get(k) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
+                if all(isinstance(v, (int, float)) for v in coords):
+                    pts.append((coords[0], coords[1], coords[2]))
+                    pts.append((coords[3], coords[4], coords[5]))
+            return pts
+
+        eps = [_wire_endpoints(g) for g in self.wire_groups]
+        dirs = [g.element_direction for g in self.wire_groups]
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if find(i) == find(j):
+                    continue
+                di, dj = dirs[i], dirs[j]
+                if di == (0, 0, 0) or dj == (0, 0, 0):
+                    continue
+                # Check collinear (direction vectors parallel, within ~18°)
+                dot = abs(di[0] * dj[0] + di[1] * dj[1] + di[2] * dj[2])
+                if dot < 0.95:
+                    continue
+                # Check connected (any shared endpoint within tolerance)
+                tol = 1e-4
+                connected = any(
+                    all(abs(a - b) < tol for a, b in zip(pi, pj))
+                    for pi in eps[i]
+                    for pj in eps[j]
+                )
+                if connected:
+                    union(i, j)
+
+        # Rebuild merged groups
+        merged: dict[int, _WireGroup] = {}
+        for i in range(n):
+            root = find(i)
+            if root not in merged:
+                merged[root] = _WireGroup(
+                    tag=self.wire_groups[root].tag,
+                    wires=list(self.wire_groups[root].wires),
+                )
+            elif i != root:
+                merged[root].wires.extend(self.wire_groups[i].wires)
+
+        self.wire_groups = list(merged.values())
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +658,30 @@ def _classify_moxon(ctx: _AnalysisContext, result: ClassificationResult) -> None
     # Moxon has 2 groups with ~3 wires each (center + 2 bent tails)
     wire_counts = [len(g.wires) for g in ctx.wire_groups]
     if all(2 <= c <= 5 for c in wire_counts):
+        # Reject if all wires within each group are collinear
+        # (stepped-diameter elements, not bent Moxon ends)
+        all_collinear = True
+        for g in ctx.wire_groups:
+            d = g.element_direction
+            if d == (0, 0, 0) or len(g.wires) < 2:
+                continue
+            for w in g.wires:
+                lp = w.labeled_params
+                coords = [lp.get(k) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
+                if not all(isinstance(v, (int, float)) for v in coords):
+                    continue
+                x1, y1, z1, x2, y2, z2 = coords
+                dx, dy, dz = x2 - x1, y2 - y1, z2 - z1
+                mag = math.sqrt(dx * dx + dy * dy + dz * dz)
+                if mag > 0:
+                    dot = abs(d[0] * dx / mag + d[1] * dy / mag + d[2] * dz / mag)
+                    if dot < 0.9:
+                        all_collinear = False
+                        break
+            if not all_collinear:
+                break
+        if all_collinear:
+            return
         # Check for bent-end topology: wires going in different directions
         for g in ctx.wire_groups:
             if len(g.wires) >= 3:
@@ -710,6 +809,9 @@ def _classify_wire_array(ctx: _AnalysisContext, result: ClassificationResult) ->
 def _classify_dipole(ctx: _AnalysisContext, result: ClassificationResult) -> None:
     """Dipole: fallback for 1-2 elements without yagi-like boom."""
     if result.confidence >= 0.7:
+        return
+    # Don't override a more specific type that already has decent confidence
+    if result.antenna_type not in ("unknown",) and result.confidence >= 0.5:
         return
     if ctx.n_wire_groups == 0:
         return
