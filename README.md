@@ -91,3 +91,7 @@ Multi-strategy classification pipeline:
 yagi, dipole, vertical, loop, quad, hexbeam, lpda, phased_array, helix,
 collinear, inverted_v, end_fed, j_pole, moxon, wire_array, patch, fractal,
 magnetic_loop, bobtail_curtain, rhombic, beverage, discone, turnstile
+
+## Hamfeeds Integration
+
+This project is integrated into the [hamfeeds](https://github.com/antennaforge/hamfeeds) WSPR propagation dashboard as a git submodule. See [docs/HAMFEEDS_INTEGRATION_PLAN.md](docs/HAMFEEDS_INTEGRATION_PLAN.md) for the full integration architecture, auth flow, and implementation phases.

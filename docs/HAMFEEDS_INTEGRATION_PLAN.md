@@ -449,7 +449,28 @@ Both services now live on `wspr_network` directly (no external network needed) a
 
 ---
 
-## 14. Open Questions
+## 14. Cross-Repo Regression Testing
+
+Whenever changes are made in either repository that touch integration surfaces (auth headers, API endpoints, database schema, Docker networking, nginx config), **run regression tests in both repos** before merging:
+
+```bash
+# antenna-classifier (from repo root)
+PYTHONPATH=src python3 -m pytest tests/ -x -q
+
+# hamfeeds (from repo root)
+python3 -m pytest tests/ -x -q
+```
+
+Key areas that require cross-repo test runs:
+- Changes to `X-HF-*` trusted header names or values
+- Database schema changes to shared tables (`ac_user_antennas`, `user_feature_flags`, `ac_user_antenna_links`)
+- Docker network or service name changes
+- nginx proxy or `auth_request` configuration changes
+- API contract changes on `/api/auth/verify-antenna` or `/api/me`
+
+---
+
+## 15. Open Questions
 
 1. **Anonymous catalog access?** Recommend yes (catalog-public, My Antenna requires login). Settable via config if needed.
 2. **Rate limiting AI calls?** Consider per-user rate limit (e.g., 10 AI generations/hour) to control OpenAI cost.
