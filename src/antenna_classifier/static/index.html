@@ -324,7 +324,7 @@ async function refreshCatalog() {
     catalog = catResp.files || [];
     summary = sumResp;
     renderStats();
-    renderFileList(catalog);
+    applyFilters(); // preserve active filters instead of resetting to full catalog
     renderSummary();
     if (catResp.loading) {
       document.getElementById('header-stats').innerHTML += ' <span style="color:var(--yellow);font-size:11px;">(scanning...)</span>';
