@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -283,3 +284,100 @@ def simulate(
     if result.error == "no_pattern_detected":
         return simulate_impedance(nec_path, base_url=base_url, z0=z0, timeout=timeout)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Frequency sweep — generate multi-point SWR / impedance data
+# ---------------------------------------------------------------------------
+
+def _build_sweep_deck(
+    nec_text: str,
+    n_points: int = 21,
+    bw_fraction: float = 0.15,
+) -> tuple[str, float]:
+    """Replace FR card with a frequency sweep, remove RP card for speed.
+
+    Returns (modified_nec_deck, center_freq_mhz).
+    """
+    lines = nec_text.strip().splitlines()
+    center_freq = 0.0
+    new_lines: list[str] = []
+
+    for line in lines:
+        upper = line.strip().upper()
+
+        if upper.startswith("FR"):
+            parts = re.split(r"[,\s]+", line.strip())
+            try:
+                center_freq = float(parts[5])
+            except (ValueError, IndexError):
+                new_lines.append(line)
+                continue
+
+            f_low = center_freq * (1 - bw_fraction)
+            step = (2 * bw_fraction * center_freq) / max(n_points - 1, 1)
+            new_lines.append(f"FR 0,{n_points},0,0,{f_low:.6f},{step:.6f}")
+            continue
+
+        # Remove RP card — not needed for impedance/SWR sweep
+        if upper.startswith("RP"):
+            continue
+
+        new_lines.append(line)
+
+    return "\n".join(new_lines), center_freq
+
+
+def simulate_sweep(
+    nec_path: Path | str,
+    *,
+    base_url: str = DEFAULT_URL,
+    z0: float = 50.0,
+    n_points: int = 21,
+    bw_fraction: float = 0.15,
+    timeout: int = 180,
+) -> SimulationResult:
+    """Run frequency sweep (impedance + SWR across ±bw_fraction of design freq)."""
+    nec_path = Path(nec_path)
+    nec_text = nec_path.read_text()
+    sweep_deck, center_freq = _build_sweep_deck(nec_text, n_points, bw_fraction)
+
+    if center_freq <= 0:
+        return SimulationResult(filename=nec_path.name, ok=False, error="no_freq_card")
+
+    try:
+        resp = _post_json(
+            f"{base_url}/run",
+            {"nec_deck": sweep_deck, "z0": z0},
+            timeout=timeout,
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        return SimulationResult(filename=nec_path.name, ok=False, error=str(e))
+
+    if not resp.get("ok"):
+        return SimulationResult(
+            filename=nec_path.name, ok=False,
+            error=resp.get("error", "unknown"), raw=resp,
+        )
+
+    parsed = resp.get("parsed", resp)
+    swr_data = parsed.get("swr_sweep", {})
+    imp_data = parsed.get("impedance_sweep", {})
+
+    swr = SWRSweep(
+        freq_mhz=swr_data.get("freq_mhz", []),
+        swr=swr_data.get("swr", []),
+        z0=z0,
+    ) if swr_data.get("freq_mhz") else None
+
+    impedance = ImpedanceSweep(
+        freq_mhz=imp_data.get("freq_mhz", []),
+        r=imp_data.get("r", []),
+        x=imp_data.get("x", []),
+        z0=z0,
+    ) if imp_data.get("freq_mhz") else None
+
+    return SimulationResult(
+        filename=nec_path.name, ok=True,
+        swr=swr, impedance=impedance, raw=resp,
+    )

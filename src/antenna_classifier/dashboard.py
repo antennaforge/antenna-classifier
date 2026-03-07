@@ -24,7 +24,7 @@ from .simulator import simulate, DEFAULT_URL as DEFAULT_SOLVER_URL
 # ---------------------------------------------------------------------------
 try:
     from fastapi import FastAPI, Query, HTTPException
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi.responses import HTMLResponse, JSONResponse, Response
     from fastapi.staticfiles import StaticFiles
 except ImportError:
     FastAPI = None  # type: ignore[assignment,misc]
@@ -46,7 +46,6 @@ def create_app(
     app = FastAPI(
         title="Antenna Classifier Dashboard",
         version="0.3.0",
-        root_path=root_path,
     )
 
     # ---- Static files (frontend) ----
@@ -101,11 +100,18 @@ def create_app(
 
     # ---- API Endpoints ----
 
+    @app.get("/favicon.ico")
+    async def favicon():
+        return Response(status_code=204)
+
     @app.get("/", response_class=HTMLResponse)
     async def index():
         html_path = static_dir / "index.html"
         if html_path.exists():
-            return HTMLResponse(html_path.read_text())
+            html = html_path.read_text().replace(
+                '"__ROOT_PATH__"', json.dumps(root_path),
+            )
+            return HTMLResponse(html)
         return HTMLResponse("<h1>Antenna Classifier Dashboard</h1><p>Static files not found.</p>")
 
     @app.get("/api/catalog")
@@ -201,6 +207,22 @@ def create_app(
 
         p = Path(rec["path"])
         result = simulate(p, base_url=solver_url)
+        return JSONResponse(result.to_dict())
+
+    @app.post("/api/sweep/{filename:path}")
+    async def run_sweep(filename: str):
+        """Run frequency sweep (SWR + impedance across ±15% of design freq)."""
+        _ensure_catalog()
+        rec = _catalog_index.get(filename)
+        if not rec:
+            raise HTTPException(404, f"File not found: {filename}")
+
+        p = Path(rec["path"])
+        # Scale sweep points inversely with model complexity
+        wires = rec.get("wire_count", 10)
+        n_pts = 21 if wires <= 10 else 11 if wires <= 30 else 7
+        from .simulator import simulate_sweep
+        result = simulate_sweep(p, base_url=solver_url, n_points=n_pts)
         return JSONResponse(result.to_dict())
 
     @app.get("/api/types")

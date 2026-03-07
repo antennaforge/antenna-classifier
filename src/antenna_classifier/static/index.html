@@ -190,8 +190,10 @@ a { color: var(--accent); text-decoration: none; }
 
 <script>
 // ---- State ----
-// Derive base URL from where the page is served (handles reverse proxy path prefixes)
-const BASE_URL = window.location.pathname.replace(/\/$/, '');
+// Derive base URL: use server-injected root_path, fall back to pathname
+const ROOT_PATH = "__ROOT_PATH__";
+const BASE_URL = ROOT_PATH || window.location.pathname.replace(/\/$/, '');
+window.__BASE_URL = BASE_URL;
 let catalog = [];
 let summary = {};
 let activeFile = null;
@@ -330,6 +332,7 @@ async function selectFile(filename) {
 
   const data = await fetch(`${BASE_URL}/api/file/${encodeURIComponent(filename)}`).then(r => r.json());
   _viewer3dLoaded = null; // reset so 3D reloads for new file
+  _simLoadedFile = null;  // reset so simulation reruns for new file
   renderDetail(data);
   load3DView(filename); // 3D View is the default tab
 }
@@ -379,11 +382,18 @@ function renderDetail(d) {
 
     <!-- Simulation tab -->
     <div class="tab-content" id="tab-sim">
-      <div class="sim-controls">
-        <button class="btn" id="sim-btn" onclick="runSimulation('${esc(d.filename)}')">Run Simulation</button>
-        <span class="sim-status" id="sim-status"></span>
+      <div id="sim-loading" style="text-align:center;padding:40px;color:var(--muted);">
+        <div class="spinner"></div> Running NEC simulation &amp; frequency sweep...
       </div>
-      <div id="sim-results"></div>
+      <div id="sim-error" style="display:none;"></div>
+      <div id="sim-content" style="display:none;">
+        <div class="sim-summary" id="sim-summary-stats"></div>
+        <div class="plot-grid">
+          <div class="plot-card"><h4>SWR vs Frequency</h4><div id="plot-swr" class="plot-box"></div></div>
+          <div class="plot-card"><h4>Impedance vs Frequency</h4><div id="plot-impedance" class="plot-box"></div></div>
+          <div class="plot-card" style="grid-column:1/-1;"><h4>Radiation Pattern</h4><div id="plot-pattern" class="plot-box"></div></div>
+        </div>
+      </div>
     </div>
 
     <!-- Evidence tab -->
@@ -432,150 +442,231 @@ function switchTab(tabEl) {
   tabEl.classList.add('active');
   document.getElementById(tabEl.dataset.tab).classList.add('active');
   if (tabEl.dataset.tab === 'tab-3d' && activeFile) load3DView(activeFile);
+  if (tabEl.dataset.tab === 'tab-sim' && activeFile) loadSimulation(activeFile);
 }
 
 // ---- Simulation ----
-async function runSimulation(filename) {
-  const btn = document.getElementById('sim-btn');
-  const status = document.getElementById('sim-status');
-  const results = document.getElementById('sim-results');
-  btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Running NEC simulation...';
-  results.innerHTML = '';
+let _simLoadedFile = null;
+
+async function loadSimulation(filename) {
+  if (_simLoadedFile === filename) return;
+  _simLoadedFile = filename;
+
+  const loading = document.getElementById('sim-loading');
+  const errEl = document.getElementById('sim-error');
+  const content = document.getElementById('sim-content');
+  loading.style.display = 'block';
+  errEl.style.display = 'none';
+  content.style.display = 'none';
 
   try {
-    const resp = await fetch(`${BASE_URL}/api/simulate/${encodeURIComponent(filename)}`, { method: 'POST' });
-    const data = await resp.json();
-    btn.disabled = false;
-    status.textContent = '';
+    // Run pattern simulation and frequency sweep in parallel
+    const [patResp, sweepResp] = await Promise.all([
+      fetch(`${BASE_URL}/api/simulate/${encodeURIComponent(filename)}`, { method: 'POST' }).then(r => r.json()),
+      fetch(`${BASE_URL}/api/sweep/${encodeURIComponent(filename)}`, { method: 'POST' }).then(r => r.json()),
+    ]);
+    loading.style.display = 'none';
 
-    if (!data.ok) {
-      let errHtml = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;"><strong>Simulation failed:</strong> ${esc(data.error || 'Unknown error')}`;
-      if (data.error === 'nec_failed' && data.stderr) {
-        errHtml += `<pre style="margin-top:8px;color:var(--muted);font-size:12px;white-space:pre-wrap;max-height:200px;overflow:auto">${esc(data.stderr)}</pre>`;
+    // Check for total failure
+    if (!patResp.ok && !sweepResp.ok) {
+      let msg = patResp.error || sweepResp.error || 'Unknown error';
+      let html = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;"><strong>Simulation failed:</strong> ${esc(msg)}`;
+      if (patResp.error === 'nec_failed' && patResp.stderr) {
+        html += `<pre style="margin-top:8px;color:var(--muted);font-size:12px;white-space:pre-wrap;max-height:200px;overflow:auto">${esc(patResp.stderr)}</pre>`;
       }
-      if (data.error === 'nec_failed') {
-        errHtml += `<div style="margin-top:8px;color:var(--muted);font-size:12px;">This file may use NEC-4 features or syntax not supported by nec2c.</div>`;
+      if (patResp.error === 'nec_failed') {
+        html += `<div style="margin-top:8px;color:var(--muted);font-size:12px;">This file may use NEC-4 features or syntax not supported by nec2c.</div>`;
       }
-      errHtml += '</div>';
-      results.innerHTML = errHtml;
+      html += '</div>';
+      errEl.innerHTML = html;
+      errEl.style.display = 'block';
+      _simLoadedFile = null;
       return;
     }
-    renderSimResults(data);
+
+    // Use sweep data for SWR/impedance (multi-point), pattern data for radiation
+    const sweepData = sweepResp.ok ? sweepResp : patResp;
+    const patData = patResp.ok ? patResp : null;
+    renderSimulation(sweepData, patData);
+    content.style.display = 'block';
   } catch (err) {
-    btn.disabled = false;
-    status.textContent = '';
-    results.innerHTML = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;">Error: ${esc(err.message)}. Is the nec-solver container running?</div>`;
+    loading.style.display = 'none';
+    errEl.innerHTML = `<div style="color:var(--red);padding:12px;background:var(--surface);border-radius:8px;">Error: ${esc(err.message)}. Is the nec-solver container running?</div>`;
+    errEl.style.display = 'block';
+    _simLoadedFile = null;
   }
 }
 
-function renderSimResults(data) {
-  const el = document.getElementById('sim-results');
-  let html = '';
-
+function renderSimulation(sweepData, patData) {
   // Summary stats
   const stats = [];
-  if (data.swr_sweep) {
-    stats.push({ label: 'Min SWR', value: data.swr_sweep.min_swr?.toFixed(2) ?? 'N/A' });
-    stats.push({ label: 'Resonant Freq', value: data.swr_sweep.resonant_freq_mhz ? data.swr_sweep.resonant_freq_mhz.toFixed(2)+' MHz' : 'N/A' });
-    stats.push({ label: '2:1 BW', value: data.swr_sweep.bandwidth_2to1_mhz ? data.swr_sweep.bandwidth_2to1_mhz.toFixed(2)+' MHz' : 'N/A' });
+  const swr = sweepData.swr_sweep;
+  const imp = sweepData.impedance_sweep;
+  const pat = patData?.radiation_pattern;
+
+  if (swr) {
+    stats.push({ label: 'Min SWR', value: swr.min_swr != null ? swr.min_swr.toFixed(2) : 'N/A' });
+    stats.push({ label: 'Resonant Freq', value: swr.resonant_freq_mhz ? swr.resonant_freq_mhz.toFixed(2)+' MHz' : 'N/A' });
+    stats.push({ label: '2:1 BW', value: swr.bandwidth_2to1_mhz ? swr.bandwidth_2to1_mhz.toFixed(2)+' MHz' : 'N/A' });
   }
-  if (data.radiation_pattern) {
-    stats.push({ label: 'Max Gain', value: data.radiation_pattern.max_gain_dbi?.toFixed(2)+' dBi' ?? 'N/A' });
-    stats.push({ label: 'F/B Ratio', value: data.radiation_pattern.front_to_back_db ? data.radiation_pattern.front_to_back_db.toFixed(1)+' dB' : 'N/A' });
-  }
-  if (stats.length) {
-    html += '<div class="sim-summary">' + stats.map(s => `
-      <div class="sim-stat"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>
-    `).join('') + '</div>';
+  if (pat) {
+    stats.push({ label: 'Max Gain', value: pat.max_gain_dbi != null ? pat.max_gain_dbi.toFixed(2)+' dBi' : 'N/A' });
+    stats.push({ label: 'F/B Ratio', value: pat.front_to_back_db != null ? pat.front_to_back_db.toFixed(1)+' dB' : 'N/A' });
   }
 
-  html += '<div class="plot-grid">';
+  const statsEl = document.getElementById('sim-summary-stats');
+  statsEl.innerHTML = stats.map(s => `
+    <div class="sim-stat"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>
+  `).join('');
 
-  // SWR plot
-  if (data.swr_sweep && data.swr_sweep.freq_mhz?.length) {
-    html += `<div class="plot-card"><h4>SWR vs Frequency</h4><div id="plot-swr" class="plot-box"></div></div>`;
-  }
-  // Impedance plot
-  if (data.impedance_sweep && data.impedance_sweep.freq_mhz?.length) {
-    html += `<div class="plot-card"><h4>Impedance vs Frequency</h4><div id="plot-impedance" class="plot-box"></div></div>`;
-  }
-  // Radiation pattern
-  if (data.radiation_pattern && data.radiation_pattern.theta?.length) {
-    html += `<div class="plot-card"><h4>Radiation Pattern</h4><div id="plot-pattern" class="plot-box"></div></div>`;
-  }
-
-  html += '</div>';
-  el.innerHTML = html;
-
-  // Render plots after DOM update
   requestAnimationFrame(() => {
     const plotStyle = { paper_bgcolor: 'transparent', plot_bgcolor: '#0d1117', font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 40, l: 50, r: 20 } };
     const axStyle = { gridcolor: '#21262d', zerolinecolor: '#30363d' };
 
-    if (data.swr_sweep?.freq_mhz?.length) {
-      const swrMode = data.swr_sweep.freq_mhz.length === 1 ? 'markers' : 'lines+markers';
+    // SWR plot
+    const swrEl = document.getElementById('plot-swr');
+    if (swr?.freq_mhz?.length > 1) {
       Plotly.newPlot('plot-swr', [
-        { x: data.swr_sweep.freq_mhz, y: data.swr_sweep.swr, type: 'scatter', mode: swrMode, name: 'SWR', line: { color: '#58a6ff', width: 2 }, marker: { color: '#58a6ff', size: 8 } },
-        { x: data.swr_sweep.freq_mhz, y: data.swr_sweep.freq_mhz.map(() => 2), type: 'scatter', mode: 'lines', name: '2:1', line: { color: '#f85149', width: 1, dash: 'dash' } },
-      ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'SWR', ...axStyle, rangemode: 'tozero' }, showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
+        { x: swr.freq_mhz, y: swr.swr, type: 'scatter', mode: 'lines', name: 'SWR', line: { color: '#58a6ff', width: 2 } },
+        { x: swr.freq_mhz, y: swr.freq_mhz.map(() => 2), type: 'scatter', mode: 'lines', name: '2:1', line: { color: '#f85149', width: 1, dash: 'dash' } },
+      ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'SWR', ...axStyle, rangemode: 'tozero', range: [0, Math.min(10, Math.max(...swr.swr.filter(v => isFinite(v))))] }, showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
+    } else if (swr?.freq_mhz?.length === 1) {
+      swrEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);">Single frequency: SWR = ${swr.swr[0]?.toFixed(2) ?? 'N/A'} at ${swr.freq_mhz[0]} MHz</div>`;
+    } else {
+      swrEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No SWR data available</div>';
     }
-    if (data.impedance_sweep?.freq_mhz?.length) {
-      const impMode = data.impedance_sweep.freq_mhz.length === 1 ? 'markers' : 'lines+markers';
+
+    // Impedance plot
+    const impEl = document.getElementById('plot-impedance');
+    if (imp?.freq_mhz?.length > 1) {
       Plotly.newPlot('plot-impedance', [
-        { x: data.impedance_sweep.freq_mhz, y: data.impedance_sweep.r, type: 'scatter', mode: impMode, name: 'R (Ω)', line: { color: '#3fb950', width: 2 }, marker: { color: '#3fb950', size: 8 } },
-        { x: data.impedance_sweep.freq_mhz, y: data.impedance_sweep.x, type: 'scatter', mode: impMode, name: 'X (Ω)', line: { color: '#d29922', width: 2 }, marker: { color: '#d29922', size: 8 } },
+        { x: imp.freq_mhz, y: imp.r, type: 'scatter', mode: 'lines', name: 'R (\u03A9)', line: { color: '#3fb950', width: 2 } },
+        { x: imp.freq_mhz, y: imp.x, type: 'scatter', mode: 'lines', name: 'X (\u03A9)', line: { color: '#d29922', width: 2 } },
+        { x: imp.freq_mhz, y: imp.freq_mhz.map(() => 0), type: 'scatter', mode: 'lines', name: '0\u03A9', line: { color: '#30363d', width: 1, dash: 'dot' }, showlegend: false },
       ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'Ohms', ...axStyle }, showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
+    } else if (imp?.freq_mhz?.length === 1) {
+      impEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);">Single frequency: Z = ${imp.r[0]?.toFixed(1) ?? '?'} ${imp.x[0] >= 0 ? '+' : ''}${imp.x[0]?.toFixed(1) ?? '?'}j \u03A9 at ${imp.freq_mhz[0]} MHz</div>`;
+    } else {
+      impEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No impedance data available</div>';
     }
-    if (data.radiation_pattern?.theta?.length) {
-      renderRadiationPattern(data.radiation_pattern);
+
+    // Radiation pattern
+    const patEl = document.getElementById('plot-pattern');
+    if (pat?.theta?.length) {
+      renderRadiationPattern(pat);
+    } else {
+      patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No radiation pattern — file may lack an RP card</div>';
     }
   });
 }
 
 function renderRadiationPattern(pat) {
-  // Group by phi to make E-plane and H-plane cuts
-  const byPhi = {};
-  for (let i = 0; i < pat.theta.length; i++) {
-    const phi = pat.phi[i];
-    if (!byPhi[phi]) byPhi[phi] = { theta: [], gain: [] };
-    byPhi[phi].theta.push(pat.theta[i]);
-    byPhi[phi].gain.push(pat.gain_db[i]);
-  }
-
-  const phis = Object.keys(byPhi).map(Number).sort((a,b) => a-b);
-  const traces = [];
+  const uniqueTheta = [...new Set(pat.theta)].sort((a,b) => a-b);
+  const uniquePhi = [...new Set(pat.phi)].sort((a,b) => a-b);
   const colors = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#bc8cff'];
-
-  // Show up to 4 phi cuts, always include phi=0 and phi=90 if present
-  let selectedPhis = phis.slice(0, 4);
-  if (phis.includes(0) && !selectedPhis.includes(0)) selectedPhis[0] = 0;
-  if (phis.includes(90) && !selectedPhis.includes(90)) selectedPhis[selectedPhis.length > 1 ? 1 : selectedPhis.length] = 90;
-
-  selectedPhis.forEach((phi, idx) => {
-    const data = byPhi[phi];
-    // Convert gain to linear for polar plot (shift so min is visible)
-    const minG = Math.min(...data.gain);
-    const shifted = data.gain.map(g => Math.max(0, g - minG));
-    traces.push({
-      type: 'scatterpolar', mode: 'lines',
-      r: shifted, theta: data.theta,
-      name: `φ=${phi}°`,
-      line: { color: colors[idx % colors.length], width: 2 },
-    });
-  });
-
-  Plotly.newPlot('plot-pattern', traces, {
+  const polarLayout = {
     paper_bgcolor: 'transparent', plot_bgcolor: '#0d1117',
     font: { color: '#e6edf3', size: 11 },
     polar: {
       bgcolor: '#0d1117',
       angularaxis: { gridcolor: '#21262d', linecolor: '#30363d', direction: 'clockwise' },
-      radialaxis: { gridcolor: '#21262d', linecolor: '#30363d', angle: 45 },
+      radialaxis: { gridcolor: '#21262d', linecolor: '#30363d', angle: 45, title: { text: 'dB' } },
     },
     showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 },
-    margin: { t: 20, b: 20, l: 40, r: 40 },
-  }, { responsive: true });
+    margin: { t: 30, b: 20, l: 40, r: 40 },
+  };
+
+  // Determine pattern type: azimuth (many phi, few theta) or elevation (many theta, few phi)
+  if (uniqueTheta.length <= 3 && uniquePhi.length > 10) {
+    // Azimuth pattern — gain vs phi at fixed theta
+    const traces = [];
+    uniqueTheta.forEach((theta, idx) => {
+      const phis = [], gains = [];
+      for (let i = 0; i < pat.theta.length; i++) {
+        if (pat.theta[i] === theta) {
+          phis.push(pat.phi[i]);
+          gains.push(pat.gain_db[i]);
+        }
+      }
+      const validGains = gains.filter(g => g > -900);
+      if (!validGains.length) return;
+      const minG = Math.min(...validGains);
+      const shifted = gains.map(g => g > -900 ? Math.max(0, g - minG) : 0);
+      traces.push({
+        type: 'scatterpolar', mode: 'lines',
+        r: shifted, theta: phis,
+        name: `\u03B8=${theta}°`,
+        line: { color: colors[idx % colors.length], width: 2 },
+      });
+    });
+    polarLayout.title = { text: 'Azimuth Pattern', font: { color: '#8b949e', size: 12 } };
+    Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
+
+  } else if (uniquePhi.length <= 10 && uniqueTheta.length > 10) {
+    // Elevation cuts — gain vs theta at selected phi values
+    const byPhi = {};
+    for (let i = 0; i < pat.theta.length; i++) {
+      const phi = pat.phi[i];
+      if (!byPhi[phi]) byPhi[phi] = { theta: [], gain: [] };
+      byPhi[phi].theta.push(pat.theta[i]);
+      byPhi[phi].gain.push(pat.gain_db[i]);
+    }
+    // Select phi cuts: prefer 0, 90, 180, 270
+    let selectedPhis = uniquePhi.slice(0, 4);
+    for (const preferred of [0, 90, 180, 270]) {
+      if (uniquePhi.includes(preferred) && !selectedPhis.includes(preferred)) {
+        selectedPhis.push(preferred);
+      }
+    }
+    selectedPhis = [...new Set(selectedPhis)].sort((a,b) => a-b).slice(0, 4);
+
+    const traces = [];
+    selectedPhis.forEach((phi, idx) => {
+      const d = byPhi[phi];
+      const validGains = d.gain.filter(g => g > -900);
+      if (!validGains.length) return;
+      const minG = Math.min(...validGains);
+      const shifted = d.gain.map(g => g > -900 ? Math.max(0, g - minG) : 0);
+      traces.push({
+        type: 'scatterpolar', mode: 'lines',
+        r: shifted, theta: d.theta,
+        name: `\u03C6=${phi}°`,
+        line: { color: colors[idx % colors.length], width: 2 },
+      });
+    });
+    polarLayout.title = { text: 'Elevation Pattern', font: { color: '#8b949e', size: 12 } };
+    Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
+
+  } else {
+    // Full pattern — pick principal planes (phi=0 and phi=90)
+    const byPhi = {};
+    for (let i = 0; i < pat.theta.length; i++) {
+      const phi = pat.phi[i];
+      if (!byPhi[phi]) byPhi[phi] = { theta: [], gain: [] };
+      byPhi[phi].theta.push(pat.theta[i]);
+      byPhi[phi].gain.push(pat.gain_db[i]);
+    }
+    const selectedPhis = [];
+    for (const p of [0, 90]) { if (byPhi[p]) selectedPhis.push(p); }
+    if (!selectedPhis.length) selectedPhis.push(uniquePhi[0]);
+
+    const traces = [];
+    selectedPhis.forEach((phi, idx) => {
+      const d = byPhi[phi];
+      const validGains = d.gain.filter(g => g > -900);
+      if (!validGains.length) return;
+      const minG = Math.min(...validGains);
+      const shifted = d.gain.map(g => g > -900 ? Math.max(0, g - minG) : 0);
+      traces.push({
+        type: 'scatterpolar', mode: 'lines',
+        r: shifted, theta: d.theta,
+        name: `\u03C6=${phi}°`,
+        line: { color: colors[idx % colors.length], width: 2 },
+      });
+    });
+    polarLayout.title = { text: 'Radiation Pattern', font: { color: '#8b949e', size: 12 } };
+    Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
+  }
 }
 
 // ---- 3D View ----
@@ -612,9 +703,8 @@ function esc(s) {
 
 <!-- Three.js 3D viewer module (loaded after importmap) -->
 <script type="module">
-  const baseURL = window.location.pathname.replace(/\/$/, '');
   try {
-    const mod = await import(baseURL + '/static/viewer3d.js');
+    const mod = await import((window.__BASE_URL || '') + '/static/viewer3d.js');
     window.Viewer3D = { init: mod.init, dispose: mod.dispose };
   } catch (e) {
     console.warn('3D viewer module failed to load:', e);
