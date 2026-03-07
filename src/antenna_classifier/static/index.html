@@ -753,7 +753,7 @@ function renderRadiationPattern(pat, geoData) {
       });
     });
     polarLayout.title = { text: 'Azimuth Pattern', font: { color: '#8b949e', size: 12 } };
-    Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
+    return Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
 
   } else if (uniquePhi.length <= 10 && uniqueTheta.length > 10) {
     // Elevation cuts — gain vs theta at selected phi values
@@ -791,7 +791,7 @@ function renderRadiationPattern(pat, geoData) {
       });
     });
     polarLayout.title = { text: 'Elevation Pattern', font: { color: '#8b949e', size: 12 } };
-    Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
+    return Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
 
   } else {
     // Full 3D grid — render as 3D surface in Cartesian coordinates
@@ -874,7 +874,7 @@ function renderRadiationPattern(pat, geoData) {
         });
       }
     }
-    Plotly.newPlot('plot-pattern', traces3d, {
+    return Plotly.newPlot('plot-pattern', traces3d, {
       paper_bgcolor: 'transparent',
       scene: {
         bgcolor: '#0d1117',
@@ -913,7 +913,7 @@ async function forcePattern(type) {
     const pat = resp.radiation_pattern;
     if (pat?.theta?.length) {
       _lastPatData = pat;
-      renderRadiationPattern(pat, _lastGeoData);
+      await renderRadiationPattern(pat, _lastGeoData);
     } else {
       patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No pattern data returned</div>';
     }
@@ -1228,7 +1228,7 @@ async function forceUserPattern(type) {
     const resp = await fetch(`${BASE_URL}/api/my-antennas/${activeUserAntenna}/pattern?type=${type}`, { method: 'POST' }).then(r => r.json());
     if (!resp.ok) { patEl.innerHTML = '<div style="color:var(--red);padding:20px;">Failed: ' + esc(resp.error) + '</div>'; return; }
     const pat = resp.radiation_pattern;
-    if (pat?.theta?.length) { _lastPatData = pat; renderRadiationPattern(pat, _lastGeoData); }
+    if (pat?.theta?.length) { _lastPatData = pat; await renderRadiationPattern(pat, _lastGeoData); }
     else patEl.innerHTML = '<div style="padding:20px;color:var(--muted);">No pattern data</div>';
   } catch (e) { patEl.innerHTML = '<div style="color:var(--red);padding:20px;">Error: ' + esc(e.message) + '</div>'; }
 }
@@ -1398,7 +1398,7 @@ function esc(s) {
 <!-- Three.js 3D viewer module (loaded after importmap) -->
 <script type="module">
   try {
-    const mod = await import((window.__BASE_URL || '') + '/static/viewer3d.js');
+    const mod = await import((window.__BASE_URL || '') + '/static/viewer3d.js?v=2');
     window.Viewer3D = {
       init: mod.init, dispose: mod.dispose,
       showCurrents: mod.showCurrents, clearCurrents: mod.clearCurrents,
