@@ -127,6 +127,8 @@ a { color: var(--accent); text-decoration: none; }
 .pat-btn { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 3px 10px; cursor: pointer; font-size: 11px; text-transform: none; }
 .pat-btn:hover { color: var(--fg); border-color: #58a6ff; }
 .pat-btn.active { color: #58a6ff; border-color: #58a6ff; }
+.dr-select { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
+.dr-select:hover { color: var(--fg); border-color: #58a6ff; }
 
 .sim-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .sim-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
@@ -400,6 +402,13 @@ function renderDetail(d) {
                 <button class="pat-btn" onclick="forcePattern('elevation')" title="Elevation cut (theta sweep at phi=0)">Elevation</button>
                 <button class="pat-btn" onclick="forcePattern('azimuth')" title="Azimuth cut (phi sweep at theta=90)">Azimuth</button>
                 <button class="pat-btn" onclick="forcePattern('full')" title="Full 3D hemisphere">3D</button>
+                <select id="dr-range" class="dr-select" onchange="reRenderPattern()" title="Dynamic range floor for pattern display">
+                  <option value="20">20 dB</option>
+                  <option value="30">30 dB</option>
+                  <option value="40" selected>40 dB</option>
+                  <option value="60">60 dB</option>
+                  <option value="0">Full</option>
+                </select>
               </span>
             </h4>
             <div id="plot-pattern" class="plot-box" style="min-height:540px;"></div>
@@ -570,6 +579,7 @@ function renderSimulation(sweepData, patData, geoData) {
 
     // Radiation pattern
     _lastGeoData = geoData;
+    _lastPatData = pat;
     const patEl = document.getElementById('plot-pattern');
     // Clear active state on forced-pattern buttons when showing file's own pattern
     document.querySelectorAll('.pat-btn').forEach(b => b.classList.remove('active'));
@@ -611,7 +621,10 @@ function renderRadiationPattern(pat, geoData) {
       }
       const validGains = gains.filter(g => g > -900);
       if (!validGains.length) return;
-      const minG = Math.min(...validGains);
+      const drVal = parseInt(document.getElementById('dr-range')?.value || '40', 10);
+      const rawMin = Math.min(...validGains);
+      const maxG = Math.max(...validGains);
+      const minG = drVal > 0 ? Math.max(rawMin, maxG - drVal) : rawMin;
       const shifted = gains.map(g => g > -900 ? Math.max(0, g - minG) : 0);
       traces.push({
         type: 'scatterpolar', mode: 'lines',
@@ -646,7 +659,10 @@ function renderRadiationPattern(pat, geoData) {
       const d = byPhi[phi];
       const validGains = d.gain.filter(g => g > -900);
       if (!validGains.length) return;
-      const minG = Math.min(...validGains);
+      const drVal = parseInt(document.getElementById('dr-range')?.value || '40', 10);
+      const rawMin = Math.min(...validGains);
+      const maxG = Math.max(...validGains);
+      const minG = drVal > 0 ? Math.max(rawMin, maxG - drVal) : rawMin;
       const shifted = d.gain.map(g => g > -900 ? Math.max(0, g - minG) : 0);
       traces.push({
         type: 'scatterpolar', mode: 'lines',
@@ -669,13 +685,14 @@ function renderRadiationPattern(pat, geoData) {
       const ti = thetaMap.get(pat.theta[k]), pi = phiMap.get(pat.phi[k]);
       if (ti !== undefined && pi !== undefined) gainMatrix[ti][pi] = pat.gain_db[k];
     }
-    // Clamp gain floor to max_gain - 40 dB to avoid deep-null distortion
+    // Clamp gain floor to user-selected dynamic range
+    const drVal = parseInt(document.getElementById('dr-range')?.value || '40', 10);
     let maxG = -Infinity, rawMinG = Infinity;
     for (let i = 0; i < nT; i++) for (let j = 0; j < nP; j++) {
       const v = gainMatrix[i][j];
       if (v > -900) { if (v > maxG) maxG = v; if (v < rawMinG) rawMinG = v; }
     }
-    const minG = Math.max(rawMinG, maxG - 40);
+    const minG = drVal > 0 ? Math.max(rawMinG, maxG - drVal) : rawMinG;
     for (let i = 0; i < nT; i++) for (let j = 0; j < nP; j++) {
       if (gainMatrix[i][j] > -900 && gainMatrix[i][j] < minG) gainMatrix[i][j] = minG;
     }
@@ -755,8 +772,12 @@ function renderRadiationPattern(pat, geoData) {
   }
 }
 
-// ---- Forced pattern request ----
+// ---- Pattern re-render on dynamic range change ----
 let _lastGeoData = null;
+let _lastPatData = null;
+function reRenderPattern() {
+  if (_lastPatData?.theta?.length) renderRadiationPattern(_lastPatData, _lastGeoData);
+}
 async function forcePattern(type) {
   const filename = _simLoadedFile;
   if (!filename) return;
@@ -772,6 +793,7 @@ async function forcePattern(type) {
     }
     const pat = resp.radiation_pattern;
     if (pat?.theta?.length) {
+      _lastPatData = pat;
       renderRadiationPattern(pat, _lastGeoData);
     } else {
       patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No pattern data returned</div>';
