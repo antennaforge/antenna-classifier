@@ -58,6 +58,9 @@ def nec_dir(tmp_path: Path) -> Path:
 @pytest.fixture()
 def client(nec_dir: Path) -> TestClient:
     """Create a test client with a fresh app."""
+    import os
+    # Redirect user NEC dir to temp path so tests don't need /data
+    os.environ["USER_NEC_DIR"] = str(nec_dir / "user_nec_files")
     app = create_app(nec_dir=nec_dir, solver_url="http://localhost:99999")
     with TestClient(app) as c:
         # Wait briefly for the background catalog scan to finish
@@ -257,3 +260,163 @@ class TestFindNecFileFallback:
             # Should still find the file via fallback
             assert resp.status_code == 200
             assert resp.json()["filename"] == "dipole.nec"
+
+
+# ---------------------------------------------------------------------------
+# Catalog filter combinations
+# ---------------------------------------------------------------------------
+
+class TestCatalogFilters:
+    def test_filter_by_band(self, client: TestClient):
+        """Band filter should return only matching files."""
+        # Get all bands from summary first
+        bands = client.get("/api/summary").json()["bands"]
+        if not bands:
+            pytest.skip("No bands detected in test data")
+        band = next(iter(bands))
+        resp = client.get(f"/api/catalog?band={band}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert all(f.get("band") == band for f in data["files"])
+
+    def test_combined_type_and_valid_filter(self, client: TestClient):
+        """Multiple filters should compose — type + valid_only together."""
+        resp = client.get("/api/catalog?antenna_type=dipole&valid_only=true")
+        assert resp.status_code == 200
+        for f in resp.json()["files"]:
+            assert f["antenna_type"] == "dipole"
+            assert f["valid"] is True
+
+    def test_filter_nonexistent_type_returns_empty(self, client: TestClient):
+        """Filtering by a type that doesn't exist should return zero results."""
+        resp = client.get("/api/catalog?antenna_type=nonexistent_antenna_xyz")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["files"] == []
+
+    def test_filter_nonexistent_band_returns_empty(self, client: TestClient):
+        resp = client.get("/api/catalog?band=999GHz")
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 0
+
+    def test_filtered_total_matches_file_count(self, client: TestClient):
+        """The 'total' field should match the length of 'files'."""
+        resp = client.get("/api/catalog?valid_only=true")
+        data = resp.json()
+        assert data["total"] == len(data["files"])
+
+
+# ---------------------------------------------------------------------------
+# HTML regression guards — verifies critical JS patterns in served HTML
+# ---------------------------------------------------------------------------
+
+class TestHTMLRegressions:
+    """Guard against regressions in client-side JS patterns.
+
+    These tests fetch the served index.html and assert that key code
+    patterns we've fixed are present. If someone reverts a fix, these
+    will catch it.
+    """
+
+    @pytest.fixture()
+    def html(self, client: TestClient) -> str:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        return resp.text
+
+    def test_refresh_catalog_uses_apply_filters(self, html: str):
+        """refreshCatalog must call applyFilters(), not renderFileList(catalog).
+
+        Regression: refreshCatalog previously called renderFileList(catalog)
+        which bypassed active filters and reset the sidebar every 3 seconds.
+        """
+        # Find the refreshCatalog function body
+        idx = html.find("function refreshCatalog")
+        assert idx != -1, "refreshCatalog function not found in HTML"
+        # Check within the next ~600 chars (the function body)
+        body = html[idx:idx + 600]
+        assert "applyFilters()" in body, (
+            "refreshCatalog must call applyFilters() to preserve user filters"
+        )
+        assert "renderFileList(catalog)" not in body, (
+            "refreshCatalog must NOT call renderFileList(catalog) — bypasses filters"
+        )
+
+    def test_degenerate_gain_check_in_force_pattern(self, html: str):
+        """forcePattern must guard against degenerate gain data (all -999.99).
+
+        Regression: files with all gains = -999.99 produced Infinity
+        surfacecolor values that hung Plotly, leaving the spinner forever.
+        """
+        idx = html.find("async function forcePattern")
+        assert idx != -1, "forcePattern function not found"
+        # Need a large window — the gain check is after fetch/response handling
+        body = html[idx:idx + 1500]
+        assert "validGains" in body, (
+            "forcePattern must filter validGains before rendering"
+        )
+
+    def test_degenerate_gain_check_in_render_simulation(self, html: str):
+        """renderSimulation initial path must check for degenerate gain data."""
+        idx = html.find("function renderSimulation")
+        assert idx != -1, "renderSimulation function not found"
+        body = html[idx:idx + 5000]
+        # Should check gains before calling renderRadiationPattern
+        assert "g > -900" in body, (
+            "renderSimulation must check for degenerate gain data (g > -900)"
+        )
+
+    def test_spinner_cleared_before_plotly_render(self, html: str):
+        """forcePattern must explicitly clear spinner before Plotly.newPlot.
+
+        Regression: spinner persisted because Plotly render was slow and
+        the spinner div was not cleared before the render call.
+        """
+        idx = html.find("async function forcePattern")
+        assert idx != -1
+        body = html[idx:idx + 1500]
+        assert "clear spinner" in body.lower() or "innerHTML = ''" in body, (
+            "forcePattern must clear spinner before Plotly render"
+        )
+
+    def test_currents_button_outside_viewer3d_container(self, html: str):
+        """Currents button must be a sibling of viewer3d-container, not a child.
+
+        Regression: load3DView does container.innerHTML='' which destroyed
+        any child elements. The button and legend must be in a wrapper div.
+        """
+        # Look for the wrapper pattern: position:relative div containing
+        # viewer3d-container AND btn-currents as siblings
+        idx = html.find("position:relative")
+        assert idx != -1, "wrapper div with position:relative not found"
+        # The btn-currents should NOT be inside viewer3d-container
+        v3d_start = html.find('id="viewer3d-container"')
+        assert v3d_start != -1
+        # Find the closing </div> of viewer3d-container
+        v3d_close = html.find("</div>", v3d_start)
+        v3d_block = html[v3d_start:v3d_close]
+        assert "btn-currents" not in v3d_block, (
+            "btn-currents must NOT be inside viewer3d-container (innerHTML wipe destroys it)"
+        )
+
+    def test_legend_high_before_low(self, html: str):
+        """Current legend must show High at top (red) and Low at bottom (blue).
+
+        Regression: labels were placed left/right of a vertical bar instead
+        of top/bottom matching the gradient direction.
+        """
+        idx = html.find('id="currents-legend"')
+        assert idx != -1, "currents-legend not found"
+        legend = html[idx:idx + 800]
+        # High should appear before Low in the DOM (top before bottom)
+        high_pos = legend.find(">High<")
+        low_pos = legend.find(">Low<")
+        assert high_pos != -1 and low_pos != -1, "High/Low labels not found in legend"
+        assert high_pos < low_pos, (
+            "High must appear before Low in DOM (top of gradient = High)"
+        )
+        # Should use flex-direction:column for vertical layout
+        assert "flex-direction:column" in legend, (
+            "Legend must use flex-direction:column for vertical layout"
+        )

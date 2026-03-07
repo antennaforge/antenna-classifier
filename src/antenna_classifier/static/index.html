@@ -502,10 +502,10 @@ function renderDetail(d) {
         <button id="btn-currents" onclick="toggleCurrentOverlay()" style="position:absolute;top:10px;right:10px;z-index:10;background:rgba(22,27,34,0.85);border:1px solid var(--border);color:var(--accent);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;backdrop-filter:blur(4px);display:none;">&#x1f321; Show Currents</button>
         <div id="currents-legend" style="display:none;position:absolute;bottom:14px;right:14px;z-index:10;background:rgba(22,27,34,0.85);border:1px solid var(--border);border-radius:6px;padding:8px 10px;backdrop-filter:blur(4px);font-size:11px;color:var(--muted);">
           <div style="margin-bottom:4px;text-align:center;color:var(--text);font-weight:600;">Current</div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span>Low</span>
-            <div style="width:14px;height:100px;border-radius:3px;border:1px solid var(--border);background:linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff);"></div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
             <span>High</span>
+            <div style="width:14px;height:80px;border-radius:3px;border:1px solid var(--border);background:linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff);"></div>
+            <span>Low</span>
           </div>
         </div>
       </div>
@@ -1108,10 +1108,10 @@ function renderUserAntennaDetail(d) {
         <button id="btn-user-currents" onclick="toggleUserCurrentOverlay()" style="position:absolute;top:10px;right:10px;z-index:10;background:rgba(22,27,34,0.85);border:1px solid var(--border);color:var(--accent);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;backdrop-filter:blur(4px);display:none;">&#x1f321; Show Currents</button>
         <div id="user-currents-legend" style="display:none;position:absolute;bottom:14px;right:14px;z-index:10;background:rgba(22,27,34,0.85);border:1px solid var(--border);border-radius:6px;padding:8px 10px;backdrop-filter:blur(4px);font-size:11px;color:var(--muted);">
           <div style="margin-bottom:4px;text-align:center;color:var(--text);font-weight:600;">Current</div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span>Low</span>
-            <div style="width:14px;height:100px;border-radius:3px;border:1px solid var(--border);background:linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff);"></div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
             <span>High</span>
+            <div style="width:14px;height:80px;border-radius:3px;border:1px solid var(--border);background:linear-gradient(to bottom, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff);"></div>
+            <span>Low</span>
           </div>
         </div>
       </div>
