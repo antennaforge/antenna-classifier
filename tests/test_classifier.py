@@ -336,3 +336,91 @@ class TestFreqToBand:
         )
         result = classify(parse_text(nec))
         assert result.band == band
+
+
+# ---------------------------------------------------------------------------
+# Wire-group merging regression tests
+# ---------------------------------------------------------------------------
+
+class TestWireGroupMerging:
+    """Regression: _merge_connected_wire_groups must merge wires sharing
+    endpoints into single elements, regardless of collinearity.
+    Fixed in commit 9f2eac1."""
+
+    def test_stepped_diameter_merges(self):
+        """5 collinear GW wires sharing endpoints → 1 element."""
+        nec = (
+            "CM stepped-dia element\nCE\n"
+            "GW 1,5,-2.603,0,0,-1.524,0,0,.008\n"
+            "GW 2,3,-1.524,0,0,-1.041,0,0,.010\n"
+            "GW 3,9,-1.041,0,0,1.041,0,0,.010\n"
+            "GW 4,3,1.041,0,0,1.524,0,0,.010\n"
+            "GW 5,5,1.524,0,0,2.603,0,0,.008\n"
+            "GE 0\nEX 0,3,5,0,1,0\nFR 0,1,0,0,29.\nGN -1\nEN"
+        )
+        result = classify(parse_text(nec))
+        assert result.element_count == 1
+
+    def test_u_shaped_half_square_merges(self):
+        """3 GW wires forming a U shape (2 vertical + 1 horizontal) → 1 element."""
+        nec = (
+            "CM U-shape element\nCE\n"
+            "GW 1,11,0,0,10,0,0,9,.001\n"
+            "GW 2,22,0,0,9,1,0,9,.009\n"
+            "GW 3,11,1,0,9,1,0,10,.001\n"
+            "GE 1\nEX 0,1,11,0,1,0\nFR 0,1,0,0,146.\nEN"
+        )
+        result = classify(parse_text(nec))
+        assert result.element_count == 1
+
+    def test_disconnected_elements_stay_separate(self):
+        """Two wires with no shared endpoints → 2 elements."""
+        nec = (
+            "CM two disconnected wires\n"
+            "GW 1 21 0 -5 0 0 5 0 0.001\n"
+            "GW 2 21 3 -5 0 3 5 0 0.001\n"
+            "GE 0\nEX 0 1 11 0 1 0\nFR 0 1 0 0 14.15\nEN\n"
+        )
+        result = classify(parse_text(nec))
+        assert result.element_count == 2
+
+    def test_right_angle_wires_merge(self):
+        """Two wires meeting at a right angle → 1 element."""
+        nec = (
+            "CM L-bend\nCE\n"
+            "GW 1,11,0,0,0,0,0,5,.001\n"
+            "GW 2,11,0,0,5,5,0,5,.001\n"
+            "GE 0\nEX 0,1,1,0,1,0\nFR 0,1,0,0,14.\nEN"
+        )
+        result = classify(parse_text(nec))
+        assert result.element_count == 1
+
+    def test_chain_of_three_wires_merges(self):
+        """Three wires in a chain (A-B, B-C, C-D) → 1 element."""
+        nec = (
+            "CM chain\nCE\n"
+            "GW 1,11,0,0,0,1,0,0,.001\n"
+            "GW 2,11,1,0,0,2,0,0,.001\n"
+            "GW 3,11,2,0,0,3,0,0,.001\n"
+            "GE 0\nEX 0,1,6,0,1,0\nFR 0,1,0,0,14.\nEN"
+        )
+        result = classify(parse_text(nec))
+        assert result.element_count == 1
+
+    def test_two_separate_chains_stay_separate(self):
+        """Two disconnected chains → 2 elements."""
+        nec = (
+            "CM two chains\nCE\n"
+            "GW 1,11,0,0,0,1,0,0,.001\n"
+            "GW 2,11,1,0,0,2,0,0,.001\n"
+            "GW 3,11,10,0,0,11,0,0,.001\n"
+            "GW 4,11,11,0,0,12,0,0,.001\n"
+            "GE 0\nEX 0,1,6,0,1,0\nFR 0,1,0,0,14.\nEN"
+        )
+        result = classify(parse_text(nec))
+        assert result.element_count == 2
+
+    def test_single_wire_no_merge_needed(self):
+        """Single wire element needs no merging."""
+        result = classify(parse_text(_dipole_nec()))
+        assert result.element_count == 1

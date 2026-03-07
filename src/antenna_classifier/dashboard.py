@@ -249,7 +249,6 @@ def create_app(
         p = _find_nec_file(filename)
         if type not in ("elevation", "azimuth", "full"):
             raise HTTPException(400, f"Invalid pattern type: {type}")
-        p = Path(rec["path"])
         from .simulator import simulate_pattern
         result = simulate_pattern(p, base_url=solver_url, force_pattern=type)
         return JSONResponse(result.to_dict())
