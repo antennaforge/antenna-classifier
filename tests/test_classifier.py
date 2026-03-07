@@ -214,6 +214,22 @@ class TestStructuralClassification:
         assert result.antenna_type == "yagi"
         assert result.element_count == 2
 
+    def test_half_square_element_count(self):
+        """Half-square Yagi: 6 GW wires (3 per U-shaped element) should merge to 2 elements."""
+        nec = (
+            "CM half square, Yagi 2M\nCE\n"
+            "GW 1,11,-.508,0.,9.659619,-.508,0.,9.144,.0015875\n"
+            "GW 2,22,-.508,0.,9.144,.508,0.,9.144,.009525\n"
+            "GW 3,11,.508,0.,9.144,.508,0.,9.659619,.0015875\n"
+            "GW 4,11,-.508,-.3048,9.69772,-.508,-.3048,9.144,.0015875\n"
+            "GW 5,22,-.508,-.3048,9.144,.508,-.3048,9.144,.009525\n"
+            "GW 6,11,.508,-.3048,9.144,.508,-.3048,9.69772,.0015875\n"
+            "GE 1\nFR 0,1,0,0,146.\nGN 2,0,0,0,13.,.005\n"
+            "EX 0,1,11,0,.707107,0.\nEX 0,2,1,0,.707107,0.\nEN"
+        )
+        result = classify(parse_text(nec))
+        assert result.element_count == 2
+
     def test_phased_array_multi_ex(self):
         result = classify(parse_text(_phased_nec()))
         assert result.antenna_type == "phased_array"

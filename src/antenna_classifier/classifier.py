@@ -264,9 +264,10 @@ class _AnalysisContext:
                 tag_map.setdefault(tag, []).append(w)
         self.wire_groups = [_WireGroup(tag=t, wires=ws) for t, ws in sorted(tag_map.items())]
 
-        # Merge wire groups that are collinear and connected end-to-end
-        # (stepped-diameter elements use separate tags per diameter section)
-        self._merge_connected_collinear()
+        # Merge wire groups that share endpoints into connected components.
+        # Handles stepped-diameter elements (collinear, different radii) and
+        # multi-wire elements like half-square/quad (non-collinear U/loop shapes).
+        self._merge_connected_wire_groups()
         self.n_wire_groups = len(self.wire_groups)
 
         # Frequency — collect all FR entries
@@ -330,11 +331,12 @@ class _AnalysisContext:
         # Comment text
         self.comment_text = self.parsed.comment_text.lower()
 
-    def _merge_connected_collinear(self) -> None:
-        """Merge wire groups connected end-to-end and collinear.
+    def _merge_connected_wire_groups(self) -> None:
+        """Merge wire groups that share endpoints into connected components.
 
-        Stepped-diameter elements use separate GW tags per diameter section.
-        This merges them into single physical elements via union-find.
+        Handles stepped-diameter elements (collinear wires, different radii per
+        section) and multi-wire element shapes like half-square or quad loops
+        where wires meet at angles.  Uses union-find on endpoint proximity.
         """
         n = len(self.wire_groups)
         if n < 2:
@@ -364,21 +366,13 @@ class _AnalysisContext:
             return pts
 
         eps = [_wire_endpoints(g) for g in self.wire_groups]
-        dirs = [g.element_direction for g in self.wire_groups]
 
+        tol = 1e-4
         for i in range(n):
             for j in range(i + 1, n):
                 if find(i) == find(j):
                     continue
-                di, dj = dirs[i], dirs[j]
-                if di == (0, 0, 0) or dj == (0, 0, 0):
-                    continue
-                # Check collinear (direction vectors parallel, within ~18°)
-                dot = abs(di[0] * dj[0] + di[1] * dj[1] + di[2] * dj[2])
-                if dot < 0.95:
-                    continue
                 # Check connected (any shared endpoint within tolerance)
-                tol = 1e-4
                 connected = any(
                     all(abs(a - b) < tol for a, b in zip(pi, pj))
                     for pi in eps[i]
