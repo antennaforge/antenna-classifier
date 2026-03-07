@@ -638,34 +638,61 @@ function renderRadiationPattern(pat) {
     Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
 
   } else {
-    // Full pattern — pick principal planes (phi=0 and phi=90)
-    const byPhi = {};
-    for (let i = 0; i < pat.theta.length; i++) {
-      const phi = pat.phi[i];
-      if (!byPhi[phi]) byPhi[phi] = { theta: [], gain: [] };
-      byPhi[phi].theta.push(pat.theta[i]);
-      byPhi[phi].gain.push(pat.gain_db[i]);
+    // Full 3D grid — render as 3D surface in Cartesian coordinates
+    // Build gain matrix [theta_idx][phi_idx]
+    const thetaMap = new Map(); uniqueTheta.forEach((v,i) => thetaMap.set(v,i));
+    const phiMap = new Map(); uniquePhi.forEach((v,i) => phiMap.set(v,i));
+    const nT = uniqueTheta.length, nP = uniquePhi.length;
+    const gainMatrix = Array.from({length: nT}, () => new Float64Array(nP));
+    for (let k = 0; k < pat.theta.length; k++) {
+      const ti = thetaMap.get(pat.theta[k]), pi = phiMap.get(pat.phi[k]);
+      if (ti !== undefined && pi !== undefined) gainMatrix[ti][pi] = pat.gain_db[k];
     }
-    const selectedPhis = [];
-    for (const p of [0, 90]) { if (byPhi[p]) selectedPhis.push(p); }
-    if (!selectedPhis.length) selectedPhis.push(uniquePhi[0]);
-
-    const traces = [];
-    selectedPhis.forEach((phi, idx) => {
-      const d = byPhi[phi];
-      const validGains = d.gain.filter(g => g > -900);
-      if (!validGains.length) return;
-      const minG = Math.min(...validGains);
-      const shifted = d.gain.map(g => g > -900 ? Math.max(0, g - minG) : 0);
-      traces.push({
-        type: 'scatterpolar', mode: 'lines',
-        r: shifted, theta: d.theta,
-        name: `\u03C6=${phi}°`,
-        line: { color: colors[idx % colors.length], width: 2 },
-      });
-    });
-    polarLayout.title = { text: 'Radiation Pattern', font: { color: '#8b949e', size: 12 } };
-    Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
+    // Shift so min valid gain → 0
+    let minG = Infinity;
+    for (let i = 0; i < nT; i++) for (let j = 0; j < nP; j++) {
+      if (gainMatrix[i][j] > -900 && gainMatrix[i][j] < minG) minG = gainMatrix[i][j];
+    }
+    const deg = Math.PI / 180;
+    const xs = [], ys = [], zs = [], colors = [];
+    for (let i = 0; i < nT; i++) {
+      const xr = [], yr = [], zr = [], cr = [];
+      const th = uniqueTheta[i] * deg;
+      for (let j = 0; j < nP; j++) {
+        const g = gainMatrix[i][j] > -900 ? gainMatrix[i][j] - minG : 0;
+        const r = Math.max(0, g);
+        const ph = uniquePhi[j] * deg;
+        xr.push(r * Math.sin(th) * Math.cos(ph));
+        yr.push(r * Math.sin(th) * Math.sin(ph));
+        zr.push(r * Math.cos(th));
+        cr.push(gainMatrix[i][j] > -900 ? gainMatrix[i][j] : minG);
+      }
+      xs.push(xr); ys.push(yr); zs.push(zr); colors.push(cr);
+    }
+    Plotly.newPlot('plot-pattern', [{
+      type: 'surface', x: xs, y: ys, z: zs,
+      surfacecolor: colors,
+      colorscale: [
+        [0, '#0d1117'], [0.2, '#1f6feb'], [0.4, '#58a6ff'],
+        [0.6, '#3fb950'], [0.8, '#d29922'], [1, '#f85149']
+      ],
+      colorbar: { title: 'dBi', tickfont: { color: '#8b949e' }, titlefont: { color: '#8b949e' } },
+      showscale: true,
+      lighting: { ambient: 0.6, diffuse: 0.5, specular: 0.2 },
+    }], {
+      paper_bgcolor: 'transparent',
+      scene: {
+        bgcolor: '#0d1117',
+        xaxis: { title: '', showgrid: true, gridcolor: '#21262d', zerolinecolor: '#30363d', color: '#8b949e' },
+        yaxis: { title: '', showgrid: true, gridcolor: '#21262d', zerolinecolor: '#30363d', color: '#8b949e' },
+        zaxis: { title: '', showgrid: true, gridcolor: '#21262d', zerolinecolor: '#30363d', color: '#8b949e' },
+        aspectmode: 'data',
+        camera: { eye: { x: 1.5, y: 1.5, z: 0.8 } },
+      },
+      font: { color: '#e6edf3', size: 11 },
+      title: { text: '3D Radiation Pattern', font: { color: '#8b949e', size: 12 } },
+      margin: { t: 40, b: 10, l: 10, r: 10 },
+    }, { responsive: true });
   }
 }
 
