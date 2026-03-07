@@ -205,6 +205,10 @@ let activeFile = null;
 
 // ---- Boot ----
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadCatalog();
+});
+
+async function loadCatalog() {
   const [catResp, sumResp] = await Promise.all([
     fetch(`${BASE_URL}/api/catalog`).then(r => r.json()),
     fetch(`${BASE_URL}/api/summary`).then(r => r.json()),
@@ -215,7 +219,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   populateFilters();
   renderFileList(catalog);
   renderSummary();
-});
+  // Auto-refresh while catalog is still loading
+  if (catResp.loading) {
+    document.getElementById('header-stats').innerHTML += ' <span style="color:var(--yellow);font-size:11px;">(scanning...)</span>';
+    setTimeout(refreshCatalog, 3000);
+  }
+}
+
+async function refreshCatalog() {
+  try {
+    const [catResp, sumResp] = await Promise.all([
+      fetch(`${BASE_URL}/api/catalog`).then(r => r.json()),
+      fetch(`${BASE_URL}/api/summary`).then(r => r.json()),
+    ]);
+    catalog = catResp.files || [];
+    summary = sumResp;
+    renderStats();
+    renderFileList(catalog);
+    renderSummary();
+    if (catResp.loading) {
+      document.getElementById('header-stats').innerHTML += ' <span style="color:var(--yellow);font-size:11px;">(scanning...)</span>';
+      setTimeout(refreshCatalog, 3000);
+    }
+  } catch {}
+}
 
 // ---- Header stats ----
 function renderStats() {

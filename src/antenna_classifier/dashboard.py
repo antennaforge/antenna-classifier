@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -56,10 +57,11 @@ def create_app(
     # ---- Cache of scanned files ----
     _catalog: list[dict] = []
     _catalog_index: dict[str, dict] = {}  # filename -> record
+    _catalog_ready = False
+    _catalog_lock = threading.Lock()
 
-    def _ensure_catalog() -> None:
-        if _catalog:
-            return
+    def _build_catalog() -> None:
+        """Scan and classify all NEC files (runs in background thread)."""
         for p in sorted(nec_dir.rglob("*.nec")):
             try:
                 parsed = parser.parse_file(p)
@@ -85,18 +87,26 @@ def create_app(
                     "errors": len(val.errors),
                     "warnings": len(val.warnings),
                 }
-                _catalog.append(rec)
-                _catalog_index[p.name] = rec
+                with _catalog_lock:
+                    _catalog.append(rec)
+                    _catalog_index[p.name] = rec
             except Exception as exc:
-                _catalog.append({
-                    "filename": p.name,
-                    "path": str(p),
-                    "relative_path": str(p.relative_to(nec_dir)) if p.is_relative_to(nec_dir) else p.name,
-                    "valid": False,
-                    "antenna_type": "error",
-                    "confidence": 0.0,
-                    "error": str(exc),
-                })
+                with _catalog_lock:
+                    _catalog.append({
+                        "filename": p.name,
+                        "path": str(p),
+                        "relative_path": str(p.relative_to(nec_dir)) if p.is_relative_to(nec_dir) else p.name,
+                        "valid": False,
+                        "antenna_type": "error",
+                        "confidence": 0.0,
+                        "error": str(exc),
+                    })
+        nonlocal _catalog_ready
+        _catalog_ready = True
+
+    @app.on_event("startup")
+    async def _start_catalog_scan():
+        threading.Thread(target=_build_catalog, daemon=True).start()
 
     # ---- API Endpoints ----
 
@@ -120,8 +130,8 @@ def create_app(
         valid_only: bool = Query(False),
         band: str | None = Query(None),
     ):
-        _ensure_catalog()
-        results = _catalog
+        with _catalog_lock:
+            results = list(_catalog)
         if valid_only:
             results = [r for r in results if r.get("valid")]
         if antenna_type:
@@ -129,18 +139,20 @@ def create_app(
         if band:
             results = [r for r in results if r.get("band") == band]
         return JSONResponse({
-            "total": len(_catalog),
+            "total": len(results),
             "filtered": len(results),
             "files": results,
+            "loading": not _catalog_ready,
         })
 
     @app.get("/api/summary")
     async def get_summary():
-        _ensure_catalog()
+        with _catalog_lock:
+            snapshot = list(_catalog)
         type_counts: dict[str, int] = {}
         band_counts: dict[str, int] = {}
         valid_count = 0
-        for rec in _catalog:
+        for rec in snapshot:
             atype = rec.get("antenna_type", "unknown")
             type_counts[atype] = type_counts.get(atype, 0) + 1
             b = rec.get("band") or "unknown"
@@ -148,32 +160,63 @@ def create_app(
             if rec.get("valid"):
                 valid_count += 1
         return JSONResponse({
-            "total": len(_catalog),
+            "total": len(snapshot),
             "valid": valid_count,
-            "invalid": len(_catalog) - valid_count,
+            "invalid": len(snapshot) - valid_count,
             "types": dict(sorted(type_counts.items(), key=lambda x: -x[1])),
             "bands": dict(sorted(band_counts.items(), key=lambda x: -x[1])),
         })
 
+    def _find_nec_file(filename: str) -> Path:
+        """Look up a NEC file by name — use catalog index or fall back to glob."""
+        with _catalog_lock:
+            rec = _catalog_index.get(filename)
+        if rec:
+            return Path(rec["path"])
+        # Catalog may still be loading — search the filesystem directly
+        for p in nec_dir.rglob(filename):
+            if p.is_file():
+                return p
+        raise HTTPException(404, f"File not found: {filename}")
+
     @app.get("/api/file/{filename:path}")
     async def get_file_detail(filename: str):
-        _ensure_catalog()
-        rec = _catalog_index.get(filename)
-        if not rec:
-            raise HTTPException(404, f"File not found: {filename}")
+        p = _find_nec_file(filename)
 
         # Re-parse for full detail
-        p = Path(rec["path"])
         parsed = parser.parse_file(p)
         val = validator.validate(parsed)
         cls = classifier.classify(parsed)
         fp = make_fingerprint(parsed)
 
+        # Use catalog record as base if available, otherwise build one
+        with _catalog_lock:
+            rec = _catalog_index.get(filename) or {}
+        base = rec or {
+            "filename": p.name,
+            "path": str(p),
+            "relative_path": str(p.relative_to(nec_dir)) if p.is_relative_to(nec_dir) else p.name,
+            "valid": val.valid,
+            "antenna_type": cls.antenna_type,
+            "confidence": round(cls.confidence, 2),
+            "frequency_mhz": cls.frequency_mhz,
+            "band": cls.band,
+            "element_count": cls.element_count,
+            "ground_type": cls.ground_type,
+            "wire_count": len(parsed.wire_cards),
+            "fingerprint": fp.signature,
+            "complexity": round(fp.complexity_score, 3),
+            "evidence": cls.evidence,
+            "subtypes": cls.subtypes,
+            "errors": len(val.errors),
+            "warnings": len(val.warnings),
+        }
+
         # Read raw NEC content (first 200 lines max for display)
         raw_lines = p.read_text(errors="replace").splitlines()[:200]
 
         return JSONResponse({
-            **rec,
+            **base,
             "nec_content": "\n".join(raw_lines),
             "cards": [
                 {"type": c.card_type, "line": c.line_number, "raw": c.raw}
@@ -189,33 +232,21 @@ def create_app(
     @app.get("/api/geometry/{filename:path}")
     async def get_geometry(filename: str):
         """Return 3D geometry data for the viewer."""
-        _ensure_catalog()
-        rec = _catalog_index.get(filename)
-        if not rec:
-            raise HTTPException(404, f"File not found: {filename}")
-        p = Path(rec["path"])
+        p = _find_nec_file(filename)
         parsed = parser.parse_file(p)
         from .visualizer import extract_geometry
         return JSONResponse(extract_geometry(parsed))
 
     @app.post("/api/simulate/{filename:path}")
     async def run_simulation(filename: str):
-        _ensure_catalog()
-        rec = _catalog_index.get(filename)
-        if not rec:
-            raise HTTPException(404, f"File not found: {filename}")
-
-        p = Path(rec["path"])
+        p = _find_nec_file(filename)
         result = simulate(p, base_url=solver_url)
         return JSONResponse(result.to_dict())
 
     @app.post("/api/pattern/{filename:path}")
     async def run_pattern(filename: str, type: str = "elevation"):
         """Run a forced radiation pattern (elevation, azimuth, or full 3D)."""
-        _ensure_catalog()
-        rec = _catalog_index.get(filename)
-        if not rec:
-            raise HTTPException(404, f"File not found: {filename}")
+        p = _find_nec_file(filename)
         if type not in ("elevation", "azimuth", "full"):
             raise HTTPException(400, f"Invalid pattern type: {type}")
         p = Path(rec["path"])
@@ -226,14 +257,11 @@ def create_app(
     @app.post("/api/sweep/{filename:path}")
     async def run_sweep(filename: str):
         """Run frequency sweep (SWR + impedance across ±15% of design freq)."""
-        _ensure_catalog()
-        rec = _catalog_index.get(filename)
-        if not rec:
-            raise HTTPException(404, f"File not found: {filename}")
+        p = _find_nec_file(filename)
 
-        p = Path(rec["path"])
         # Scale sweep points inversely with model complexity
-        wires = rec.get("wire_count", 10)
+        parsed = parser.parse_file(p)
+        wires = len(parsed.wire_cards)
         n_pts = 21 if wires <= 10 else 11 if wires <= 30 else 7
         from .simulator import simulate_sweep
         result = simulate_sweep(p, base_url=solver_url, n_points=n_pts)
@@ -247,10 +275,13 @@ def create_app(
     @app.post("/api/reload")
     async def reload_catalog():
         """Clear and rescan the catalog."""
-        _catalog.clear()
-        _catalog_index.clear()
-        _ensure_catalog()
-        return JSONResponse({"reloaded": len(_catalog)})
+        nonlocal _catalog_ready
+        with _catalog_lock:
+            _catalog.clear()
+            _catalog_index.clear()
+            _catalog_ready = False
+        threading.Thread(target=_build_catalog, daemon=True).start()
+        return JSONResponse({"reloaded": "started"})
 
     return app
 
