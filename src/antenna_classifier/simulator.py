@@ -170,7 +170,7 @@ def simulate_impedance(
 ) -> SimulationResult:
     """Run impedance/SWR simulation via /run endpoint."""
     nec_path = Path(nec_path)
-    nec_text = nec_path.read_text()
+    nec_text = nec_path.read_text(errors="replace")
     try:
         resp = _post_json(
             f"{base_url}/run",
@@ -221,7 +221,7 @@ def simulate_pattern(
     The /pattern endpoint also returns impedance/SWR when available.
     """
     nec_path = Path(nec_path)
-    nec_text = nec_path.read_text()
+    nec_text = nec_path.read_text(errors="replace")
     try:
         resp = _post_json(
             f"{base_url}/pattern",
@@ -339,7 +339,7 @@ def simulate_sweep(
 ) -> SimulationResult:
     """Run frequency sweep (impedance + SWR across ±bw_fraction of design freq)."""
     nec_path = Path(nec_path)
-    nec_text = nec_path.read_text()
+    nec_text = nec_path.read_text(errors="replace")
     sweep_deck, center_freq = _build_sweep_deck(nec_text, n_points, bw_fraction)
 
     if center_freq <= 0:
