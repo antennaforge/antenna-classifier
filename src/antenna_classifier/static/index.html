@@ -32,7 +32,7 @@ a { color: var(--accent); text-decoration: none; }
 .header .stats { margin-left: auto; display: flex; gap: 16px; font-size: 13px; color: var(--muted); }
 .header .stats span { color: var(--text); font-weight: 600; }
 
-.container { display: grid; grid-template-columns: 380px 1fr; height: calc(100vh - 49px); }
+.container { display: grid; grid-template-columns: 380px 1fr 200px; height: calc(100vh - 49px); }
 
 /* Sidebar */
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
@@ -206,42 +206,40 @@ a { color: var(--accent); text-decoration: none; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 .modal-status { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
 
-/* Site Navigation Dropdown */
-.site-nav { position: relative; margin-left: 16px; }
-.site-nav-btn {
-  display: flex; align-items: center; gap: 6px; padding: 6px 12px;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  color: var(--text); font-size: 13px; font-weight: 500; cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+/* Right-side Site Navigation Panel */
+.site-nav-panel {
+  background: var(--surface); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow-y: auto;
 }
-.site-nav-btn:hover { border-color: var(--accent); background: var(--surface); }
-.site-nav-btn .nav-arrow { font-size: 10px; transition: transform 0.15s; }
-.site-nav-btn.open .nav-arrow { transform: rotate(180deg); }
-.site-nav-dropdown {
-  display: none; position: absolute; top: calc(100% + 6px); right: 0;
-  min-width: 220px; background: var(--surface); border: 1px solid var(--border);
-  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 200;
-  padding: 6px 0; animation: navFadeIn 0.12s ease-out;
+.site-nav-header {
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
-.site-nav-dropdown.open { display: block; }
-@keyframes navFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-.site-nav-section { padding: 6px 12px 2px; font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+.site-nav-header h3 { font-size: 13px; font-weight: 600; color: #fff; }
+.site-nav-header .subtitle { font-size: 11px; color: rgba(255,255,255,0.8); }
+.site-nav-body { padding: 8px 0; flex: 1; }
+.site-nav-section { padding: 10px 16px 4px; font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.8px; }
 .site-nav-link {
-  display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 13px;
-  color: var(--text); text-decoration: none; transition: background 0.1s;
+  display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px;
+  color: var(--text); text-decoration: none; transition: all 0.15s;
+  border-left: 3px solid transparent;
 }
-.site-nav-link:hover { background: rgba(88,166,255,0.08); }
-.site-nav-link.active { color: var(--accent); background: rgba(88,166,255,0.1); }
-.site-nav-link .nav-icon { width: 18px; text-align: center; }
+.site-nav-link:hover { background: rgba(102,126,234,0.1); border-left-color: #667eea; padding-left: 20px; }
+.site-nav-link.active { color: var(--accent); background: rgba(102,126,234,0.15); border-left-color: #667eea; font-weight: 600; }
+.site-nav-link .nav-icon { width: 18px; text-align: center; font-size: 14px; }
 .site-nav-sep { height: 1px; background: var(--border); margin: 4px 0; }
 .site-nav-user {
-  padding: 8px 14px; font-size: 12px; color: var(--muted);
-  border-top: 1px solid var(--border); margin-top: 2px;
-  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-top: 1px solid var(--border);
+  margin-top: auto;
 }
-.site-nav-user .callsign { color: var(--accent); font-weight: 600; }
-.site-nav-user a { color: var(--red); font-size: 12px; text-decoration: none; }
-.site-nav-user a:hover { text-decoration: underline; }
+.site-nav-user .callsign { display: block; font-weight: 600; color: #667eea; font-size: 13px; margin-bottom: 8px; }
+.site-nav-user .logout-btn {
+  display: block; width: 100%; padding: 6px; text-align: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff; border-radius: 5px; font-size: 12px; text-decoration: none;
+  transition: opacity 0.2s;
+}
+.site-nav-user .logout-btn:hover { opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -249,12 +247,6 @@ a { color: var(--accent); text-decoration: none; }
 <div class="header">
   <h1>&#x1F4E1; Antenna Classifier</h1>
   <div class="stats" id="header-stats"></div>
-  <div class="site-nav" id="site-nav">
-    <button class="site-nav-btn" onclick="toggleSiteNav()" id="site-nav-btn">
-      🌍 Navigate <span class="nav-arrow">▾</span>
-    </button>
-    <div class="site-nav-dropdown" id="site-nav-dropdown"></div>
-  </div>
 </div>
 
 <div class="container">
@@ -299,6 +291,15 @@ a { color: var(--accent); text-decoration: none; }
     </div>
     <div id="detail-view" style="display:none;"></div>
   </div>
+
+  <!-- Right: Site Navigation -->
+  <div class="site-nav-panel" id="site-nav-panel">
+    <div class="site-nav-header">
+      <h3>🌍 Signal Propagation</h3>
+      <div class="subtitle">Explorer</div>
+    </div>
+    <div class="site-nav-body" id="site-nav-body"></div>
+  </div>
 </div>
 
 <script>
@@ -335,9 +336,9 @@ async function checkCurrentUser() {
   }
 }
 
-// ---- Site Navigation ----
+// ---- Site Navigation (right panel) ----
 function buildSiteNav(user) {
-  const dd = document.getElementById('site-nav-dropdown');
+  const panel = document.getElementById('site-nav-body');
   const isAuth = user && user.authenticated;
   let html = '';
   html += '<div class="site-nav-section">Main</div>';
@@ -353,30 +354,14 @@ function buildSiteNav(user) {
     html += '<a class="site-nav-link" href="/admin"><span class="nav-icon">🔐</span>Admin</a>';
     html += '<div class="site-nav-user">';
     html += '<span class="callsign">' + (user.callsign || '') + '</span>';
-    html += '<a href="/logout">Logout</a>';
+    html += '<a class="logout-btn" href="/logout">Logout</a>';
     html += '</div>';
   } else {
     html += '<div class="site-nav-sep"></div>';
     html += '<a class="site-nav-link" href="/login"><span class="nav-icon">🔑</span>Login</a>';
   }
-  dd.innerHTML = html;
+  panel.innerHTML = html;
 }
-
-function toggleSiteNav() {
-  const btn = document.getElementById('site-nav-btn');
-  const dd = document.getElementById('site-nav-dropdown');
-  const isOpen = dd.classList.toggle('open');
-  btn.classList.toggle('open', isOpen);
-}
-
-// Close site nav when clicking outside
-document.addEventListener('click', function(e) {
-  const nav = document.getElementById('site-nav');
-  if (nav && !nav.contains(e.target)) {
-    document.getElementById('site-nav-dropdown').classList.remove('open');
-    document.getElementById('site-nav-btn').classList.remove('open');
-  }
-});
 
 async function loadCatalog() {
   const [catResp, sumResp] = await Promise.all([
