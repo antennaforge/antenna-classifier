@@ -539,10 +539,15 @@ function renderSimulation(sweepData, patData, geoData) {
     // SWR plot
     const swrEl = document.getElementById('plot-swr');
     if (swr?.freq_mhz?.length > 1) {
+      const finiteSwr = swr.swr.filter(v => isFinite(v));
+      const minSwr = Math.min(...finiteSwr);
+      const maxSwr = Math.max(...finiteSwr);
+      // If all SWR values exceed 10, show full range; otherwise cap at 10
+      const yMax = minSwr > 10 ? maxSwr * 1.1 : Math.min(10, maxSwr);
       Plotly.newPlot('plot-swr', [
         { x: swr.freq_mhz, y: swr.swr, type: 'scatter', mode: 'lines', name: 'SWR', line: { color: '#58a6ff', width: 2 } },
         { x: swr.freq_mhz, y: swr.freq_mhz.map(() => 2), type: 'scatter', mode: 'lines', name: '2:1', line: { color: '#f85149', width: 1, dash: 'dash' } },
-      ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'SWR', ...axStyle, rangemode: 'tozero', range: [0, Math.min(10, Math.max(...swr.swr.filter(v => isFinite(v))))] }, showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
+      ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'SWR', ...axStyle, rangemode: 'tozero', range: [0, yMax] }, showlegend: true, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
     } else if (swr?.freq_mhz?.length === 1) {
       swrEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);">Single frequency: SWR = ${swr.swr[0]?.toFixed(2) ?? 'N/A'} at ${swr.freq_mhz[0]} MHz</div>`;
     } else {
@@ -664,10 +669,15 @@ function renderRadiationPattern(pat, geoData) {
       const ti = thetaMap.get(pat.theta[k]), pi = phiMap.get(pat.phi[k]);
       if (ti !== undefined && pi !== undefined) gainMatrix[ti][pi] = pat.gain_db[k];
     }
-    // Shift so min valid gain → 0
-    let minG = Infinity;
+    // Clamp gain floor to max_gain - 40 dB to avoid deep-null distortion
+    let maxG = -Infinity, rawMinG = Infinity;
     for (let i = 0; i < nT; i++) for (let j = 0; j < nP; j++) {
-      if (gainMatrix[i][j] > -900 && gainMatrix[i][j] < minG) minG = gainMatrix[i][j];
+      const v = gainMatrix[i][j];
+      if (v > -900) { if (v > maxG) maxG = v; if (v < rawMinG) rawMinG = v; }
+    }
+    const minG = Math.max(rawMinG, maxG - 40);
+    for (let i = 0; i < nT; i++) for (let j = 0; j < nP; j++) {
+      if (gainMatrix[i][j] > -900 && gainMatrix[i][j] < minG) gainMatrix[i][j] = minG;
     }
     const deg = Math.PI / 180;
     const xs = [], ys = [], zs = [], colors = [];
