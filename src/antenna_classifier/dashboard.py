@@ -170,7 +170,7 @@ def create_app(
         fp = make_fingerprint(parsed)
 
         # Read raw NEC content (first 200 lines max for display)
-        raw_lines = p.read_text().splitlines()[:200]
+        raw_lines = p.read_text(errors="replace").splitlines()[:200]
 
         return JSONResponse({
             **rec,
