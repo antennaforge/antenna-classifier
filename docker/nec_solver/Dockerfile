@@ -21,7 +21,7 @@ COPY api.py /app/api.py
 RUN pip install --no-cache-dir fastapi uvicorn
 
 # Non-root user
-RUN useradd -m solver && chown -R solver:solver /app
+RUN useradd -m solver && mkdir -p /cache && chown -R solver:solver /app /cache
 USER solver
 
 ENV PORT=8787

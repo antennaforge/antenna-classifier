@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Body
 import ast as _ast
-import tempfile, subprocess, shlex, re, json, os, time, hashlib, math
+import tempfile, subprocess, shlex, re, json, os, time, hashlib, math, threading
 
 # Allow selecting solver binary via environment (nec2c, nec2++, xnec2c). Default nec2c.
 NEC_BIN = os.getenv("NEC_BIN", "nec2c")
@@ -44,6 +44,56 @@ def _fmt_float(v) -> str:
     return f"{v:.7g}"
 
 app = FastAPI(title="NEC Solver API", version="1.0")
+
+# ---------------------------------------------------------------------------
+# Simulation cache — deterministic NEC output cached by content hash
+# ---------------------------------------------------------------------------
+CACHE_DIR = os.getenv("CACHE_DIR", "/cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+# Concurrency limiter — prevent CPU saturation from parallel nec2c processes
+_MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT_SIMS", "3"))
+_sim_semaphore = threading.Semaphore(_MAX_CONCURRENT)
+
+# Cache stats (in-memory, reset on restart)
+_cache_hits = 0
+_cache_misses = 0
+_cache_lock = threading.Lock()
+
+
+def _cache_key(sanitized_deck: str, endpoint: str, z0: float = 50.0) -> str:
+    """Cache key = SHA-256 of sanitized NEC content + endpoint + z0."""
+    blob = f"{sanitized_deck}|{endpoint}|{z0}"
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _cache_get(key: str) -> dict | None:
+    """Return cached JSON result or None."""
+    global _cache_hits, _cache_misses
+    path = os.path.join(CACHE_DIR, f"{key}.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        with _cache_lock:
+            _cache_hits += 1
+        return data
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        with _cache_lock:
+            _cache_misses += 1
+        return None
+
+
+def _cache_put(key: str, result: dict) -> None:
+    """Write result JSON to cache (non-fatal on error)."""
+    path = os.path.join(CACHE_DIR, f"{key}.json")
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(result, f, separators=(",", ":"))
+        os.replace(tmp, path)  # atomic on POSIX
+    except OSError:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # SY variable resolution (ported from antenna-agent-model nec_parser.py)
@@ -794,6 +844,38 @@ def parse_pattern_output(txt: str):
 def health():
     return {"ok": True}
 
+@app.get("/cache/stats")
+def cache_stats():
+    """Return cache hit/miss stats and total cached entries."""
+    try:
+        total = sum(1 for f in os.listdir(CACHE_DIR) if f.endswith(".json"))
+    except OSError:
+        total = 0
+    with _cache_lock:
+        return {
+            "hits": _cache_hits,
+            "misses": _cache_misses,
+            "cached_entries": total,
+            "max_concurrent": _MAX_CONCURRENT,
+            "cache_dir": CACHE_DIR,
+        }
+
+@app.post("/cache/clear")
+def cache_clear():
+    """Remove all cached simulation results."""
+    removed = 0
+    try:
+        for f in os.listdir(CACHE_DIR):
+            if f.endswith(".json"):
+                try:
+                    os.remove(os.path.join(CACHE_DIR, f))
+                    removed += 1
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return {"cleared": removed}
+
 @app.post("/sanitize_debug")
 def sanitize_debug(payload: dict = Body(...)):
     """Debug endpoint: return the sanitized NEC deck without running nec2c."""
@@ -810,35 +892,57 @@ def run(payload: dict = Body(...)):
         return {"ok": False, "error": "missing_nec_deck"}
     z0 = float(payload.get("z0", 50.0))
     dump_raw = bool(payload.get("dump_raw"))
-    with tempfile.TemporaryDirectory() as td:
-        inp, outp = f"{td}/model.nec", f"{td}/out.txt"
-        with open(inp, "w") as f:
-            f.write(sanitize_nec(nec_deck))
-        cmd = [NEC_BIN, f"-i{inp}", f"-o{outp}"]
-        p = subprocess.run(cmd, text=True, capture_output=True, timeout=120)
-        if p.returncode != 0:
-            return {"ok": False, "error": "nec_failed", "stderr": p.stderr, "stdout": p.stdout}
-        try:
-            with open(outp) as rf:
-                raw = rf.read()
-        except Exception:
-            raw = ""
-        if dump_raw and raw:
+
+    sanitized = sanitize_nec(nec_deck)
+
+    # --- Cache check (skip when dump_raw requested) ---
+    if not dump_raw:
+        key = _cache_key(sanitized, "run", z0)
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
+    # --- Semaphore: limit concurrent nec2c processes ---
+    if not _sim_semaphore.acquire(timeout=60):
+        return {"ok": False, "error": "server_busy",
+                "detail": "Too many concurrent simulations; try again shortly"}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            inp, outp = f"{td}/model.nec", f"{td}/out.txt"
+            with open(inp, "w") as f:
+                f.write(sanitized)
+            cmd = [NEC_BIN, f"-i{inp}", f"-o{outp}"]
+            p = subprocess.run(cmd, text=True, capture_output=True, timeout=120)
+            if p.returncode != 0:
+                return {"ok": False, "error": "nec_failed", "stderr": p.stderr, "stdout": p.stdout}
             try:
-                h = hashlib.sha256(nec_deck.encode()).hexdigest()[:10]
-                ts = int(time.time())
-                out_dir = "/raw_out"
-                if os.path.isdir(out_dir):
-                    try:
-                        os.chmod(out_dir, 0o777)
-                    except Exception:
-                        pass
-                    fname = f"run_{ts}_{h}.txt"
-                    with open(os.path.join(out_dir, fname), "w") as rf:
-                        rf.write(raw)
+                with open(outp) as rf:
+                    raw = rf.read()
             except Exception:
-                pass
-    return {"ok": True, "parsed": parse_nec_output(raw, z0=z0)}
+                raw = ""
+            if dump_raw and raw:
+                try:
+                    h = hashlib.sha256(nec_deck.encode()).hexdigest()[:10]
+                    ts = int(time.time())
+                    out_dir = "/raw_out"
+                    if os.path.isdir(out_dir):
+                        try:
+                            os.chmod(out_dir, 0o777)
+                        except Exception:
+                            pass
+                        fname = f"run_{ts}_{h}.txt"
+                        with open(os.path.join(out_dir, fname), "w") as rf:
+                            rf.write(raw)
+                except Exception:
+                    pass
+    finally:
+        _sim_semaphore.release()
+
+    result = {"ok": True, "parsed": parse_nec_output(raw, z0=z0)}
+    # Cache successful results
+    if not dump_raw:
+        _cache_put(key, result)
+    return result
 
 
 @app.post("/pattern")
@@ -856,42 +960,60 @@ def pattern(payload: dict = Body(...)):
         debug = False
     if not nec_text:
         return {"ok": False, "error": "missing_nec_text"}
-    with tempfile.TemporaryDirectory() as td:
-        inp, outp = f"{td}/model.nec", f"{td}/out.txt"
-        with open(inp, "w") as f:
-            f.write(sanitize_nec(nec_text))
-        cmd = [NEC_BIN, f"-i{inp}", f"-o{outp}"]
-        p = subprocess.run(cmd, text=True, capture_output=True, timeout=180)
-        if p.returncode != 0:
-            resp = {"ok": False, "error": "nec_failed", "stderr": p.stderr, "stdout": p.stdout}
-            if debug:
-                try:
-                    from pathlib import Path
-                    resp["cmd"] = cmd
-                    resp["cwd"] = str(Path.cwd())
-                    resp["inp_exists"] = Path(inp).exists()
-                    resp["out_exists"] = Path(outp).exists()
-                    if Path(outp).exists():
-                        resp["raw"] = open(outp).read()[-4000:]
-                except Exception:
-                    pass
-            return resp
-        raw = open(outp).read()
-        if debug:
-            try:
-                h = hashlib.sha256(nec_text.encode()).hexdigest()[:10]
-                ts = int(time.time())
-                out_dir = "/raw_out"
-                if os.path.isdir(out_dir):
+
+    sanitized = sanitize_nec(nec_text)
+
+    # --- Cache check (skip when debug requested) ---
+    if not debug:
+        key = _cache_key(sanitized, "pattern")
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
+    # --- Semaphore: limit concurrent nec2c processes ---
+    if not _sim_semaphore.acquire(timeout=60):
+        return {"ok": False, "error": "server_busy",
+                "detail": "Too many concurrent simulations; try again shortly"}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            inp, outp = f"{td}/model.nec", f"{td}/out.txt"
+            with open(inp, "w") as f:
+                f.write(sanitized)
+            cmd = [NEC_BIN, f"-i{inp}", f"-o{outp}"]
+            p = subprocess.run(cmd, text=True, capture_output=True, timeout=180)
+            if p.returncode != 0:
+                resp = {"ok": False, "error": "nec_failed", "stderr": p.stderr, "stdout": p.stdout}
+                if debug:
                     try:
-                        os.chmod(out_dir, 0o777)
+                        from pathlib import Path
+                        resp["cmd"] = cmd
+                        resp["cwd"] = str(Path.cwd())
+                        resp["inp_exists"] = Path(inp).exists()
+                        resp["out_exists"] = Path(outp).exists()
+                        if Path(outp).exists():
+                            resp["raw"] = open(outp).read()[-4000:]
                     except Exception:
                         pass
-                    fname = f"pattern_{ts}_{h}.txt"
-                    with open(os.path.join(out_dir, fname), "w") as rf:
-                        rf.write(raw)
-            except Exception:
-                pass
+                return resp
+            raw = open(outp).read()
+            if debug:
+                try:
+                    h = hashlib.sha256(nec_text.encode()).hexdigest()[:10]
+                    ts = int(time.time())
+                    out_dir = "/raw_out"
+                    if os.path.isdir(out_dir):
+                        try:
+                            os.chmod(out_dir, 0o777)
+                        except Exception:
+                            pass
+                        fname = f"pattern_{ts}_{h}.txt"
+                        with open(os.path.join(out_dir, fname), "w") as rf:
+                            rf.write(raw)
+                except Exception:
+                    pass
+    finally:
+        _sim_semaphore.release()
+
     # Always attempt to parse both pattern and impedance from a single solver run so the
     # caller can avoid two separate container executions. This unifies the data path for
     # the NEC JSON Analyzer (pattern + impedance/swr) while remaining backwards compatible
@@ -932,4 +1054,7 @@ def pattern(payload: dict = Body(...)):
             resp["raw_tail"] = raw[-2000:]
         except Exception:
             pass
+    # Cache successful results
+    if not debug:
+        _cache_put(key, resp)
     return resp

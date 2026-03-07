@@ -10,6 +10,10 @@ services:
       - "${NEC_SOLVER_PORT:-8787}:8787"
     environment:
       - NEC_BIN=${NEC_BIN:-nec2c}
+      - CACHE_DIR=/cache
+      - MAX_CONCURRENT_SIMS=${MAX_CONCURRENT_SIMS:-3}
+    volumes:
+      - nec_cache:/cache
     networks:
       - default
     healthcheck:
@@ -50,6 +54,7 @@ services:
 
 volumes:
   user_nec_files:
+  nec_cache:
 
 secrets:
   openai_api_key:
