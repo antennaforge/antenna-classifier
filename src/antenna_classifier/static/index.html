@@ -436,25 +436,52 @@ function renderSummary() {
     </div>
     <div class="section">
       <h3>Type Distribution</h3>
-      <div id="summary-type-chart" style="width:100%;height:380px;min-height:380px;"></div>
+      <div id="summary-type-chart" style="width:100%;"></div>
     </div>
     <div class="section">
       <h3>Band Distribution</h3>
       <div id="summary-band-chart" style="width:100%;height:300px;"></div>
     </div>
   `;
-  // Type pie chart
+
+  // Type distribution works better as a ranked bar chart than a donut
+  // when there are many small categories and long labels.
   const types = summary.types || {};
+  const typeChartEl = document.getElementById('summary-type-chart');
+  const typeEntries = Object.entries(types).sort((a, b) => b[1] - a[1]);
+  const topTypeLimit = 12;
+  let displayTypeEntries = typeEntries.slice(0, topTypeLimit);
+  if (typeEntries.length > topTypeLimit) {
+    const otherCount = typeEntries.slice(topTypeLimit)
+      .reduce((sum, [, count]) => sum + count, 0);
+    if (otherCount > 0) displayTypeEntries.push(['other', otherCount]);
+  }
+  const orderedTypeEntries = displayTypeEntries.slice().reverse();
+  const typeChartHeight = Math.max(360, orderedTypeEntries.length * 34 + 80);
+  typeChartEl.style.height = `${typeChartHeight}px`;
+  typeChartEl.style.minHeight = `${typeChartHeight}px`;
+
   Plotly.newPlot('summary-type-chart', [{
-    labels: Object.keys(types), values: Object.values(types),
-    type: 'pie', hole: 0.4,
-    automargin: true,
-    textinfo: 'label+value',
-    marker: { line: { color: '#161b22', width: 2 } }
+    x: orderedTypeEntries.map(([, count]) => count),
+    y: orderedTypeEntries.map(([label]) => label),
+    type: 'bar',
+    orientation: 'h',
+    text: orderedTypeEntries.map(([, count]) => count),
+    textposition: 'outside',
+    cliponaxis: false,
+    marker: {
+      color: '#2f81f7',
+      line: { color: '#161b22', width: 1.5 },
+    },
+    hovertemplate: '%{y}: %{x}<extra></extra>',
   }], { paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
-    font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 32, l: 10, r: 96 },
+    font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 24, l: 140, r: 48 },
+    xaxis: { color: '#8b949e', title: 'Count', gridcolor: 'rgba(139,148,158,0.18)' },
+    yaxis: { color: '#8b949e', automargin: true },
+    bargap: 0.18,
     showlegend: false
   }, { responsive: true });
+
   // Band bar chart
   const bands = summary.bands || {};
   Plotly.newPlot('summary-band-chart', [{
