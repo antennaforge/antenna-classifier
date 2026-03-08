@@ -517,13 +517,15 @@ def create_app(
 
         name = form.get("name", "").strip() or "PDF Upload"
         extra = form.get("description", "").strip()
+        hint_type = form.get("antenna_type", "").strip()
 
         pdf_bytes = await pdf_file.read()
         if len(pdf_bytes) > 10 * 1024 * 1024:
             raise HTTPException(400, "PDF too large (max 10 MB)")
 
         try:
-            result = generate_nec_from_pdf(pdf_bytes, extra_instructions=extra)
+            result = generate_nec_from_pdf(pdf_bytes, extra_instructions=extra,
+                                           antenna_type=hint_type)
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
         except ValueError as exc:

@@ -1311,6 +1311,14 @@ function openGenerateModal() {
 
 function openPdfModal() {
   if (!currentUser || !currentUser.ai_enabled) return;
+  const sel = document.getElementById('pdf-type');
+  if (!sel.options.length || sel.options.length <= 1) {
+    fetch(`${BASE_URL}/api/types`).then(r => r.json()).then(d => {
+      sel.innerHTML = '<option value="">(auto-detect)</option>' +
+        (d.types || []).filter(t => t !== 'unknown' && t !== 'wire_object' && t !== 'error')
+        .map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
+    });
+  }
   document.getElementById('pdf-status').textContent = '';
   document.getElementById('pdf-modal').classList.add('open');
 }
@@ -1369,6 +1377,8 @@ async function submitPdf() {
     fd.append('pdf', fileInput.files[0]);
     fd.append('name', document.getElementById('pdf-name').value.trim() || 'PDF Upload');
     fd.append('description', document.getElementById('pdf-desc').value);
+    const pdfType = document.getElementById('pdf-type').value;
+    if (pdfType) fd.append('antenna_type', pdfType);
     const resp = await fetch(`${BASE_URL}/api/my-antennas/upload-pdf`, { method: 'POST', body: fd });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
@@ -1380,6 +1390,7 @@ async function submitPdf() {
     fileInput.value = '';
     document.getElementById('pdf-name').value = '';
     document.getElementById('pdf-desc').value = '';
+    document.getElementById('pdf-type').selectedIndex = 0;
     await loadMyAntennas();
     document.getElementById('my-antennas-body').classList.add('open');
     document.getElementById('my-antenna-arrow').classList.add('open');
@@ -1433,6 +1444,8 @@ function esc(s) {
     <h2>&#128196; Import from PDF</h2>
     <label>Name</label>
     <input id="pdf-name" placeholder="e.g. Cebik 10m Phased Array">
+    <label>Antenna Type</label>
+    <select id="pdf-type"><option value="">(auto-detect)</option></select>
     <label>PDF File *</label>
     <input id="pdf-file" type="file" accept=".pdf">
     <label>Additional Instructions</label>
