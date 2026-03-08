@@ -26,6 +26,7 @@ from antenna_classifier.nec_pipeline import (
     _build_extraction_prompt,
     _format_concepts_for_generation,
     _stamp_moxon_deck,
+    _extract_tl_impedance,
     _EXTRACTION_SPECS,
 )
 
@@ -548,6 +549,71 @@ class TestValidateDeck:
         concepts = ExtractedConcepts(antenna_type="yagi", freq_mhz=28.4)
         issues = validate_deck(deck, concepts)
         assert any("no GW card" in i for i in issues)
+
+    def test_missing_tl_card_flagged_when_concepts_require_it(self):
+        """Deck without TL card when concepts.transmission_line is set."""
+        deck = _make_deck([
+            {"type": "GW", "params": [1, 21, 0, -5, 10, 0, 5, 10, 0.001]},
+            {"type": "GW", "params": [2, 21, 0, -5, 12, 0, 5, 12, 0.001]},
+            {"type": "GE", "params": [0]},
+            {"type": "EX", "params": [0, 2, 11, 0, 1.0, 0.0]},
+            {"type": "FR", "params": [0, 1, 0, 0, 28.4, 0]},
+            {"type": "EN"},
+        ])
+        concepts = ExtractedConcepts(
+            antenna_type="yagi", freq_mhz=28.4,
+            transmission_line={"z0": 250.0},
+        )
+        issues = validate_deck(deck, concepts)
+        assert any("MISSING TL CARD" in i for i in issues)
+
+    def test_tl_card_present_no_missing_flag(self):
+        """Deck with TL card when concepts.transmission_line is set — no flag."""
+        deck = _make_deck([
+            {"type": "GW", "params": [1, 21, 0, -5, 10, 0, 5, 10, 0.001]},
+            {"type": "GW", "params": [2, 21, 0, -5, 12, 0, 5, 12, 0.001]},
+            {"type": "GE", "params": [0]},
+            {"type": "TL", "params": [1, 11, 2, 11, 250, 0, 0, 0, 0, 0]},
+            {"type": "EX", "params": [0, 2, 11, 0, 1.0, 0.0]},
+            {"type": "FR", "params": [0, 1, 0, 0, 28.4, 0]},
+            {"type": "EN"},
+        ])
+        concepts = ExtractedConcepts(
+            antenna_type="yagi", freq_mhz=28.4,
+            transmission_line={"z0": 250.0},
+        )
+        issues = validate_deck(deck, concepts)
+        assert not any("MISSING TL CARD" in i for i in issues)
+
+
+# ===================================================================
+# Test _extract_tl_impedance
+# ===================================================================
+
+class TestExtractTlImpedance:
+    def test_ohm_symbol_pattern(self):
+        text = "The antenna uses a 250 Ω characteristic impedance phase line."
+        assert _extract_tl_impedance(text) == 250.0
+
+    def test_ohm_word_pattern(self):
+        text = "We connect the two driven elements with a 300-ohm transmission line."
+        assert _extract_tl_impedance(text) == 300.0
+
+    def test_z0_equals_pattern(self):
+        text = "The phase line has Z0 = 450 connecting the feeds."
+        assert _extract_tl_impedance(text) == 450.0
+
+    def test_no_tl_in_text(self):
+        text = "This is a standard 3-element Yagi with no phase line at 28 MHz."
+        assert _extract_tl_impedance(text) is None
+
+    def test_impedance_outside_range_rejected(self):
+        text = "The 10 Ω characteristic wire runs along the boom."
+        assert _extract_tl_impedance(text) is None
+
+    def test_cebik_style_hyphenated_text(self):
+        text = "a 250 Ω characteris- tic impedance phase line"
+        assert _extract_tl_impedance(text) == 250.0
 
 
 # ===================================================================

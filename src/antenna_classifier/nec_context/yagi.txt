@@ -33,3 +33,16 @@ EN
 Note: Reflector (GW 1) is at Y=0, driven (GW 2) at Y=1.84m, director (GW 3) at Y=4.60m.
 Elements extend along X, spaced apart in Y. All at Z=0 (free-space model).
 For ground-mounted models, raise all elements to the same Z height above ground.
+
+Phase-driven / dual-driven Yagi variant:
+Some designs replace the reflector+driven pair with two close-spaced driven
+elements connected by a transmission line (phase line). Key rules:
+- Both driven elements are GW cards at DIFFERENT boom positions.
+- A TL card connects them AT THEIR CENTRE SEGMENTS (not endpoints).
+  For a wire with N segments, use segment (N+1)/2.
+- The EX (feed) card goes on one driven element at its centre segment.
+- Z0 of the TL card comes from the design (commonly 200–600 Ω).
+- Set TL length=0 so NEC uses the physical spacing as electrical length.
+- The director (and any further directors) follow as normal.
+Example TL card: TL 1,11,2,11,250.,0.,0.,0.,0.,0.
+  (connects centre seg 11 of wire 1 to centre seg 11 of wire 2, Z0=250 Ω)

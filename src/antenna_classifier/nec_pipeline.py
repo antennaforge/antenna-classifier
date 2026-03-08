@@ -101,6 +101,10 @@ class ExtractedConcepts:
     height_m: float | None = None
     wire_dia_mm: float | None = None
 
+    # Transmission line extracted from source document
+    # e.g. {"z0": 250, "between": [1, 2]}  (tags of connected elements)
+    transmission_line: dict[str, Any] | None = None
+
     # Raw description (for LLM context)
     description: str = ""
 
@@ -118,6 +122,7 @@ class ExtractedConcepts:
             "ground_type": self.ground_type,
             "height_m": self.height_m,
             "wire_dia_mm": self.wire_dia_mm,
+            "transmission_line": self.transmission_line,
         }
 
 
@@ -175,12 +180,14 @@ _EXTRACTION_SPECS: dict[str, dict[str, Any]] = {
         "desc": "Yagi-Uda beam with parallel elements along a boom",
         "params": [
             ("n_elements", "Total number of elements (reflector + driven + directors)", "count"),
+            ("n_driven_elements", "Number of driven elements (1 for standard Yagi, 2 for phased dual-driven)", "count"),
             ("reflector_length", "Reflector element full length", "m"),
             ("driven_length", "Driven element full length", "m"),
             ("director_lengths", "Director element full lengths (list)", "m[]"),
             ("element_spacings", "Spacings between adjacent elements from reflector forward (list)", "m[]"),
             ("wire_diameter", "Element wire or tube diameter", "mm"),
             ("height", "Height above ground", "m"),
+            ("transmission_line_z0", "Impedance of a transmission line / phase line connecting driven elements (if any)", "ohm"),
         ],
     },
     "moxon": {
@@ -390,6 +397,31 @@ def _get_client():
     return _gc()
 
 
+def _extract_tl_impedance(text: str) -> float | None:
+    """Regex scan for transmission/phase line impedance in document text.
+
+    Looks for patterns like "250 Ω", "250-ohm", "250 ohm phase line", etc.
+    Returns the Z0 value or None if not found.
+    """
+    # Pattern: number followed by Ω/ohm, near "phase line"/"transmission line"
+    # Match e.g. "250 Ω characteris-", "250-ohm phase line", "Z0 = 250"
+    patterns = [
+        # "NNN Ω" or "NNN ohm" near phase/transmission line context
+        r'(\d{2,4})\s*[Ωω]\s*(?:characteris|impedance|phase|transmission)',
+        r'(\d{2,4})\s*[-‐]?\s*(?:ohm|Ohm|OHM)\b',
+        r'(?:phase|transmission)\s+line\s+.*?(\d{2,4})\s*[Ωω]',
+        r'Z0\s*[=:]\s*(\d{2,4})',
+        r'(\d{2,4})\s*[Ωω]\s+(?:transmission|phase)\s+line',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            z0 = float(m.group(1))
+            if 25 <= z0 <= 1000:  # reasonable TL impedance range
+                return z0
+    return None
+
+
 def _track_usage(result: PipelineResult, resp) -> None:
     """Accumulate token usage from an API response."""
     if resp.usage:
@@ -570,14 +602,19 @@ def extract_concepts(
     concepts.max_swr = doc_goals.max_swr
     concepts.bands = doc_goals.bands
 
+    # --- Regex: detect transmission/phase line impedance (scan full text) ---
+    tl_z0 = _extract_tl_impedance(text)
+    if tl_z0 is not None:
+        concepts.transmission_line = {"z0": tl_z0}
+
     # --- LLM extraction (structural parameters) ---
     if client is None:
         client = _get_client()
 
     prompt = _build_extraction_prompt(antenna_type)
 
-    # Use first 6000 chars — enough for dimension tables
-    excerpt = text[:6000]
+    # Use first 12000 chars — enough for dimension tables in multi-column PDFs
+    excerpt = text[:12000]
 
     resp = client.chat.completions.create(
         model=model,
@@ -623,6 +660,12 @@ def extract_concepts(
         concepts.wire_dia_mm = float(concepts.elements.pop("wire_diameter"))
     if "height" in concepts.elements:
         concepts.height_m = float(concepts.elements.pop("height"))
+
+    # Pull out transmission line info if extracted by LLM (fallback for regex)
+    tl_z0 = concepts.elements.pop("transmission_line_z0", None)
+    n_driven = concepts.elements.get("n_driven_elements")
+    if tl_z0 is not None and float(tl_z0) > 0 and concepts.transmission_line is None:
+        concepts.transmission_line = {"z0": float(tl_z0)}
 
     return concepts, resp
 
@@ -712,6 +755,24 @@ def _format_concepts_for_generation(
         lines.append(
             "Use these document dimensions as your PRIMARY reference. "
             "They come directly from the source material."
+        )
+
+    # Transmission line requirement
+    if concepts.transmission_line:
+        tl = concepts.transmission_line
+        z0 = tl.get("z0", 0)
+        lines.append(
+            f"\n** TRANSMISSION LINE (MANDATORY) **\n"
+            f"The source document specifies a transmission line / phase line "
+            f"with Z0 = {z0} Ω connecting the driven elements.\n"
+            f"You MUST include a TL card in the output.\n"
+            f"TL card rules:\n"
+            f"  - Connect at the CENTRE segment of each driven element wire.\n"
+            f"  - Use Z0 = {z0}.\n"
+            f"  - Set length = 0 (electrical length equals physical spacing).\n"
+            f"  - Feed (EX card) on one of the driven elements at its centre segment.\n"
+            f"  - Do NOT omit the TL card. This is a phased design, not a "
+            f"standard Yagi."
         )
 
     # Design goals
@@ -1004,6 +1065,15 @@ def validate_deck(
     missing = required - present
     if missing:
         issues.append(f"MISSING CARDS: {', '.join(sorted(missing))}")
+
+    # --- TL card required when source specifies a transmission line ---
+    if concepts.transmission_line and "TL" not in present:
+        z0 = concepts.transmission_line.get("z0", "?")
+        issues.append(
+            f"MISSING TL CARD: the source document specifies a transmission "
+            f"line (Z0={z0} Ω) connecting driven elements. You MUST include "
+            f"a TL card connecting the driven elements at their centre segments."
+        )
 
     # Check card parameter counts
     for card in cards:
