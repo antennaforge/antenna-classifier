@@ -202,22 +202,40 @@ _BAND_CENTRES: dict[str, float] = {
 def _guess_freq_mhz(text: str, antenna_type: str = "") -> float:
     """Try to extract a design frequency from free text.
 
-    Looks for explicit MHz values, then ham-band references.
-    Falls back to 14.175 (20 m) if nothing found.
+    Priority order:
+    1. Ham-band reference in the title/first 200 chars ("10 Meters")
+    2. Frequency range ("28 to 29 MHz" → centre 28.5)
+    3. Explicit MHz value ("28.5 MHz")
+    4. Ham-band reference anywhere in text
+    5. Default 14.175 (20 m)
     """
-    # Explicit MHz value (e.g. "14.175 MHz", "28.5MHz", "146 mhz")
+    # 1. Band reference in the title / first 200 chars — strongest signal
+    title = text[:200]
+    m = re.search(r"\b(\d{1,3})\s*[-]?\s*[Mm](?:eter|etre)?s?\b", title)
+    if m and m.group(1) in _BAND_CENTRES:
+        return _BAND_CENTRES[m.group(1)]
+
+    # 2. Frequency range (e.g. "28 to 29 MHz", "28-29 MHz", "28 – 29 MHz")
+    m = re.search(
+        r"(\d{1,4}(?:\.\d+)?)\s*(?:to|[-\u2013\u2014])\s*(\d{1,4}(?:\.\d+)?)\s*[Mm][Hh][Zz]",
+        text,
+    )
+    if m:
+        lo, hi = float(m.group(1)), float(m.group(2))
+        if 0.5 < lo < 1500 and 0.5 < hi < 1500:
+            return round((lo + hi) / 2, 3)
+
+    # 3. Explicit MHz value (e.g. "14.175 MHz", "28.5MHz", "146 mhz")
     m = re.search(r"(\d{1,4}(?:\.\d+)?)\s*[Mm][Hh][Zz]", text)
     if m:
         val = float(m.group(1))
         if 0.5 < val < 1500:
             return val
 
-    # Ham-band reference (e.g. "20m band", "10-meter", "15 m")
+    # 4. Ham-band reference anywhere (e.g. "20m band", "10-meter", "15 m")
     m = re.search(r"\b(\d{1,3})\s*[-]?\s*[Mm](?:eter|etre)?s?\b", text)
-    if m:
-        band = m.group(1)
-        if band in _BAND_CENTRES:
-            return _BAND_CENTRES[band]
+    if m and m.group(1) in _BAND_CENTRES:
+        return _BAND_CENTRES[m.group(1)]
 
     return 14.175  # 20 m default
 
@@ -1121,10 +1139,15 @@ def generate_nec_from_pdf(
     if not pdf_text.strip():
         raise ValueError("Could not extract any text from the PDF")
 
+    # Always detect the design frequency from the document
+    detected_freq = _guess_freq_mhz(pdf_text, antenna_type)
+
     user_msg = (
         "Below is text extracted from a PDF document describing an antenna.\n"
         "Based on the description, generate a complete NEC2 input file that "
         "models this antenna as accurately as possible.\n\n"
+        f"DESIGN FREQUENCY: The document describes an antenna for "
+        f"{detected_freq} MHz.  Use {detected_freq} MHz in the FR card.\n\n"
         "IMPORTANT: Look for dimensional tables or text giving element lengths "
         "and spacings.  Convert all dimensions to metres.  Place elements at "
         "physically correct 3-D coordinates — do NOT stack all wires at the "
@@ -1138,7 +1161,7 @@ def generate_nec_from_pdf(
         # Inject computed starting dimensions from the calculator
         from .nec_calculators import calc_for_type
 
-        calc = calc_for_type(antenna_type, _guess_freq_mhz(pdf_text, antenna_type))
+        calc = calc_for_type(antenna_type, detected_freq)
         if calc is not None:
             user_msg += (
                 f"\n--- COMPUTED STARTING DIMENSIONS ---\n"
@@ -1271,10 +1294,15 @@ def generate_nec_from_url(
     if not url_text.strip():
         raise ValueError("Could not extract any text from the URL")
 
+    # Always detect the design frequency from the document
+    detected_freq = _guess_freq_mhz(url_text, antenna_type)
+
     user_msg = (
         "Below is text extracted from a web page describing an antenna.\n"
         "Based on the description, generate a complete NEC2 input file that "
         "models this antenna as accurately as possible.\n\n"
+        f"DESIGN FREQUENCY: The document describes an antenna for "
+        f"{detected_freq} MHz.  Use {detected_freq} MHz in the FR card.\n\n"
         "IMPORTANT: Look for dimensional tables or text giving element lengths "
         "and spacings. Convert all dimensions to metres. Place elements at "
         "physically correct 3-D coordinates — do NOT stack all wires at the "
@@ -1288,7 +1316,7 @@ def generate_nec_from_url(
     if antenna_type:
         from .nec_calculators import calc_for_type
 
-        calc = calc_for_type(antenna_type, _guess_freq_mhz(url_text, antenna_type))
+        calc = calc_for_type(antenna_type, detected_freq)
         if calc is not None:
             user_msg += (
                 f"\n--- COMPUTED STARTING DIMENSIONS ---\n"
