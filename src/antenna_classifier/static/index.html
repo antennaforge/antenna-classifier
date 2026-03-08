@@ -479,6 +479,7 @@ async function selectFile(filename) {
   const data = await fetch(`${BASE_URL}/api/file/${encodeURIComponent(filename)}`).then(r => r.json());
   _viewer3dLoaded = null; // reset so 3D reloads for new file
   _simLoadedFile = null;  // reset so simulation reruns for new file
+  _userSimLoaded = null;  // reset so user sim reruns on context switch
   renderDetail(data);
   load3DView(filename); // 3D View is the default tab
 }
@@ -636,9 +637,9 @@ async function loadSimulation(filename) {
   content.style.display = 'none';
 
   try {
-    // Run pattern simulation, frequency sweep, and geometry fetch in parallel
+    // Run full 3D pattern, frequency sweep, and geometry fetch in parallel
     const [patResp, sweepResp, geoResp] = await Promise.all([
-      fetch(`${BASE_URL}/api/simulate/${encodeURIComponent(filename)}`, { method: 'POST' }).then(r => r.json()),
+      fetch(`${BASE_URL}/api/pattern/${encodeURIComponent(filename)}?type=full`, { method: 'POST' }).then(r => r.json()),
       fetch(`${BASE_URL}/api/sweep/${encodeURIComponent(filename)}`, { method: 'POST' }).then(r => r.json()),
       fetch(`${BASE_URL}/api/geometry/${encodeURIComponent(filename)}`).then(r => r.json()).catch(() => null),
     ]);
@@ -696,6 +697,9 @@ function renderSimulation(sweepData, patData, geoData) {
     <div class="sim-stat"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>
   `).join('');
 
+  _lastGeoData = geoData;
+  _lastPatData = pat;
+
   requestAnimationFrame(() => {
     const plotStyle = { paper_bgcolor: 'transparent', plot_bgcolor: '#0d1117', font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 40, l: 50, r: 20 } };
     const axStyle = { gridcolor: '#21262d', zerolinecolor: '#30363d' };
@@ -732,12 +736,10 @@ function renderSimulation(sweepData, patData, geoData) {
       impEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No impedance data available</div>';
     }
 
-    // Radiation pattern
-    _lastGeoData = geoData;
-    _lastPatData = pat;
+    // Radiation pattern (always full 3D hemisphere)
     const patEl = document.getElementById('plot-pattern');
-    // Clear active state on forced-pattern buttons when showing file's own pattern
-    document.querySelectorAll('.pat-btn').forEach(b => b.classList.remove('active'));
+    // Highlight 3D button since we default to full 3D pattern
+    document.querySelectorAll('.pat-btn').forEach(b => b.classList.toggle('active', b.textContent === '3D'));
     if (pat?.theta?.length) {
       const validGains = (pat.gain_db || []).filter(g => g > -900);
       if (validGains.length) {
@@ -881,6 +883,7 @@ function renderRadiationPattern(pat, geoData) {
       ],
       colorbar: { title: 'dBi', tickfont: { color: '#8b949e' }, titlefont: { color: '#8b949e' } },
       showscale: true,
+      opacity: 0.55,
       lighting: { ambient: 0.6, diffuse: 0.5, specular: 0.2 },
     }];
     // Overlay antenna geometry if available
@@ -942,6 +945,7 @@ async function forcePattern(type) {
   const filename = _simLoadedFile;
   if (!filename) return;
   const patEl = document.getElementById('plot-pattern');
+  Plotly.purge(patEl);
   patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);"><div class="spinner"></div> Computing ' + esc(type) + ' pattern...</div>';
   // Highlight active button
   document.querySelectorAll('.pat-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().startsWith(type.slice(0, 4))));
@@ -1101,6 +1105,7 @@ async function selectUserAntenna(id) {
   const data = await fetch(`${BASE_URL}/api/my-antennas/${id}`).then(r => r.json());
   _viewer3dLoaded = null;
   _simLoadedFile = null;
+  _userSimLoaded = null;
   renderUserAntennaDetail(data);
 }
 
@@ -1301,7 +1306,7 @@ async function loadUserSim(id) {
   loading.style.display = 'block'; errEl.style.display = 'none'; content.style.display = 'none';
   try {
     const [patResp, sweepResp, geoResp] = await Promise.all([
-      fetch(`${BASE_URL}/api/my-antennas/${id}/simulate`, { method: 'POST' }).then(r => r.json()),
+      fetch(`${BASE_URL}/api/my-antennas/${id}/pattern?type=full`, { method: 'POST' }).then(r => r.json()),
       fetch(`${BASE_URL}/api/my-antennas/${id}/sweep`, { method: 'POST' }).then(r => r.json()),
       fetch(`${BASE_URL}/api/my-antennas/${id}/geometry`).then(r => r.json()).catch(() => null),
     ]);
@@ -1325,6 +1330,7 @@ async function loadUserSim(id) {
 async function forceUserPattern(type) {
   if (!activeUserAntenna) return;
   const patEl = document.getElementById('plot-pattern');
+  Plotly.purge(patEl);
   patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);"><div class="spinner"></div> Computing ' + esc(type) + ' pattern...</div>';
   document.querySelectorAll('.pat-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().startsWith(type.slice(0, 4))));
   try {
