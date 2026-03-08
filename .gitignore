@@ -11,3 +11,4 @@ build/
 .secrets/*
 !.secrets/README.md
 .venv/
+pdfs/

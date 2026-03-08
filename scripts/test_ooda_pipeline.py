@@ -241,11 +241,14 @@ def test_url_generation() -> list[dict]:
 # Test: PDF-based generation
 # ---------------------------------------------------------------------------
 
-def test_pdf_generation(pdf_path: str) -> list[dict]:
+def test_pdf_generation(pdf_path: str, antenna_type: str = "") -> list[dict]:
     """Run PDF-based generation on a local file."""
     from antenna_classifier.nec_generator import generate_nec_from_pdf
 
-    _banner(f"PDF TEST: {pdf_path}")
+    label = f"PDF TEST: {pdf_path}"
+    if antenna_type:
+        label += f" (type hint: {antenna_type})"
+    _banner(label)
     results = []
     t0 = time.time()
     try:
@@ -255,6 +258,7 @@ def test_pdf_generation(pdf_path: str) -> list[dict]:
         result = generate_nec_from_pdf(
             pdf_bytes,
             extra_instructions="Build a NEC model from this antenna description.",
+            antenna_type=antenna_type,
         )
         elapsed = time.time() - t0
         _print_result(result)
@@ -334,6 +338,7 @@ def main():
     parser.add_argument("--form", action="store_true", help="Run form-based tests")
     parser.add_argument("--url", action="store_true", help="Run URL-based tests")
     parser.add_argument("--pdf", type=str, help="Path to a PDF file to test")
+    parser.add_argument("--pdf-type", type=str, default="", help="Antenna type hint for PDF test (e.g. moxon, yagi)")
     parser.add_argument("--calc", action="store_true", help="Run calculator sanity check only (no AI)")
     parser.add_argument("--all", action="store_true", help="Run form + URL tests")
     args = parser.parse_args()
@@ -361,7 +366,7 @@ def main():
         all_results.extend(test_url_generation())
 
     if run_pdf:
-        all_results.extend(test_pdf_generation(args.pdf))
+        all_results.extend(test_pdf_generation(args.pdf, antenna_type=args.pdf_type))
 
     # Summary
     if all_results:

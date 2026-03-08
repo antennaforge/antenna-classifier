@@ -1,18 +1,10 @@
 [
   {
-    "test": "G3TXQ Hexbeam (karinya.net)",
-    "status": "ok",
-    "type": "hexbeam",
-    "confidence": 0.8,
-    "iterations": 3,
-    "elapsed": 27.8
-  },
-  {
-    "test": "ARRL Moxon Rectangle",
+    "test": "Ceecom_10-11m_Moxon_user.pdf",
     "status": "ok",
     "type": "moxon",
     "confidence": 0.8,
     "iterations": 3,
-    "elapsed": 22.4
+    "elapsed": 29.7
   }
 ]
