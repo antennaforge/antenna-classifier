@@ -156,7 +156,7 @@ def generate_nec_from_form(
     frequency_mhz: float,
     ground_type: str = "free_space",
     description: str = "",
-    model: str = "gpt-4o",
+    model: str = "gpt-5.2",
 ) -> dict[str, Any]:
     """Generate a NEC file from structured form data.
 
@@ -209,7 +209,7 @@ def generate_nec_from_form(
 def generate_nec_from_pdf(
     pdf_bytes: bytes,
     *,
-    model: str = "gpt-4o",
+    model: str = "gpt-5.2",
     extra_instructions: str = "",
 ) -> dict[str, Any]:
     """Extract text from a PDF and ask the model to produce a NEC file.
