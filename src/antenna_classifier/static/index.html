@@ -1051,7 +1051,7 @@ function renderMyAntennaList() {
   const el = document.getElementById('my-antenna-list');
   if (!myAntennas.length) {
     const hint = currentUser && currentUser.ai_enabled
-      ? 'No antennas yet. Use Design New to create one!'
+      ? 'No antennas yet. Click ✨ Create Antenna to get started!'
       : 'No antennas yet. Ask an admin to enable antenna design for your account.';
     el.innerHTML = `<div style="padding:12px 16px;color:var(--muted);font-size:12px;">${hint}</div>`;
     return;
