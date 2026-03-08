@@ -14,6 +14,7 @@ import os
 import queue
 import sys
 import tempfile
+import time
 import threading
 from pathlib import Path
 from typing import Any
@@ -468,6 +469,13 @@ def create_app(
             raise HTTPException(400, "Name is required")
 
         q: queue.Queue[dict | None] = queue.Queue()
+        q.put({
+            "step": 0,
+            "name": "classify",
+            "status": "run",
+            "detail": "Starting generation pipeline",
+            "phase": 0,
+        })
 
         def _on_step(step_log: Any) -> None:
             phase = _STEP_PHASE.get(step_log.name, -1)
@@ -500,13 +508,20 @@ def create_app(
 
         async def _event_stream():
             import asyncio
+            last_keepalive = time.monotonic()
             while True:
                 try:
                     msg = q.get(timeout=0.1)
                 except queue.Empty:
+                    now = time.monotonic()
+                    if now - last_keepalive >= 5.0:
+                        last_keepalive = now
+                        yield ": keepalive\n\n"
+                        await asyncio.sleep(0)
                     continue
                 if msg is None:
                     break
+                last_keepalive = time.monotonic()
                 if "_result" in msg:
                     # Pipeline complete — save antenna and emit done
                     try:
@@ -748,6 +763,13 @@ def create_app(
             raise HTTPException(400, "PDF too large (max 10 MB)")
 
         q: queue.Queue[dict | None] = queue.Queue()
+        q.put({
+            "step": 0,
+            "name": "extract",
+            "status": "run",
+            "detail": "Uploading PDF and extracting document text",
+            "phase": 0,
+        })
 
         def _on_step(step_log: Any) -> None:
             phase = _STEP_PHASE.get(step_log.name, -1)
@@ -779,13 +801,20 @@ def create_app(
 
         async def _event_stream():
             import asyncio
+            last_keepalive = time.monotonic()
             while True:
                 try:
                     msg = q.get(timeout=0.1)
                 except queue.Empty:
+                    now = time.monotonic()
+                    if now - last_keepalive >= 5.0:
+                        last_keepalive = now
+                        yield ": keepalive\n\n"
+                        await asyncio.sleep(0)
                     continue
                 if msg is None:
                     break
+                last_keepalive = time.monotonic()
                 if "_result" in msg:
                     try:
                         result = msg["_result"]
@@ -955,6 +984,13 @@ def create_app(
         hint_type = body.get("antenna_type", "").strip()
 
         q: queue.Queue[dict | None] = queue.Queue()
+        q.put({
+            "step": 0,
+            "name": "extract",
+            "status": "run",
+            "detail": "Fetching source page and preparing document text",
+            "phase": 0,
+        })
 
         def _on_step(step_log: Any) -> None:
             phase = _STEP_PHASE.get(step_log.name, -1)
@@ -986,13 +1022,20 @@ def create_app(
 
         async def _event_stream():
             import asyncio
+            last_keepalive = time.monotonic()
             while True:
                 try:
                     msg = q.get(timeout=0.1)
                 except queue.Empty:
+                    now = time.monotonic()
+                    if now - last_keepalive >= 5.0:
+                        last_keepalive = now
+                        yield ": keepalive\n\n"
+                        await asyncio.sleep(0)
                     continue
                 if msg is None:
                     break
+                last_keepalive = time.monotonic()
                 if "_result" in msg:
                     try:
                         result = msg["_result"]
