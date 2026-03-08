@@ -87,20 +87,44 @@ def _get_client():
 # PDF text extraction
 # ---------------------------------------------------------------------------
 
-def extract_pdf_text(pdf_bytes: bytes, max_chars: int = 12000) -> str:
-    """Extract plain text from a PDF (first *max_chars* characters)."""
+def extract_pdf_text(pdf_bytes: bytes, max_chars: int = 20000) -> str:
+    """Extract plain text and tables from a PDF.
+
+    Uses pdfplumber to pull both free text and tabular data.  Tables
+    are formatted as pipe-delimited rows so the LLM can parse
+    dimensional data that pure ``extract_text()`` often mangles in
+    multi-column magazine layouts.
+    """
     import pdfplumber
 
     text_parts: list[str] = []
     total = 0
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
+            # --- free text ---
             page_text = page.extract_text() or ""
             text_parts.append(page_text)
             total += len(page_text)
+
+            # --- structured tables ---
+            for table in (page.extract_tables() or []):
+                formatted_rows: list[str] = []
+                for row in table:
+                    cells = [c.strip() if c else "" for c in row]
+                    if any(cells):
+                        formatted_rows.append(" | ".join(cells))
+                if formatted_rows:
+                    block = "\n[TABLE]\n" + "\n".join(formatted_rows) + "\n[/TABLE]\n"
+                    text_parts.append(block)
+                    total += len(block)
+
             if total >= max_chars:
                 break
+
     full = "\n".join(text_parts)
+    # Clean common PDF artefacts
+    full = re.sub(r"\(cid:\d+\)", "•", full)  # replace CID placeholders
+    full = re.sub(r"[ \t]{3,}", "  ", full)     # collapse excessive spaces
     return full[:max_chars]
 
 
@@ -144,16 +168,18 @@ def generate_nec_from_form(
             {"role": "user", "content": user_msg},
         ],
         temperature=0.3,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     content = resp.choices[0].message.content or ""
     nec = _extract_nec(content)
+    _validate_nec(nec)
     return {
         "nec_content": nec,
         "model": model,
         "usage": {
             "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
             "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
+            "finish_reason": resp.choices[0].finish_reason,
         },
     }
 
@@ -193,17 +219,19 @@ def generate_nec_from_pdf(
             {"role": "user", "content": user_msg},
         ],
         temperature=0.3,
-        max_tokens=4096,
+        max_tokens=8192,
     )
     content = resp.choices[0].message.content or ""
     nec = _extract_nec(content)
+    _validate_nec(nec)
     return {
         "nec_content": nec,
-        "pdf_text": pdf_text[:2000],  # truncated preview
+        "pdf_text": pdf_text[:4000],
         "model": model,
         "usage": {
             "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
             "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
+            "finish_reason": resp.choices[0].finish_reason,
         },
     }
 
@@ -225,3 +253,40 @@ def _extract_nec(raw: str) -> str:
         if line.strip().upper() == "EN":
             break
     return "\n".join(lines) + "\n"
+
+
+_REQUIRED_CARDS = {"GW", "GE", "EX", "FR", "EN"}
+
+
+def _validate_nec(nec: str) -> None:
+    """Sanity-check a generated NEC deck.
+
+    Raises ``ValueError`` with a human-readable message if the deck is
+    clearly broken so the caller can surface a useful error to the user.
+    """
+    cards_present: set[str] = set()
+    gw_lines: list[str] = []
+    for line in nec.splitlines():
+        token = line.split()[0].upper() if line.split() else ""
+        if token in ("CM", "CE", "GW", "GE", "GN", "EX", "FR", "RP", "EN"):
+            cards_present.add(token)
+        if token == "GW":
+            gw_lines.append(line.strip())
+
+    missing = _REQUIRED_CARDS - cards_present
+    if missing:
+        raise ValueError(
+            f"Generated NEC deck is incomplete — missing required cards: "
+            f"{', '.join(sorted(missing))}. "
+            f"The AI model may have been cut off. Try again or simplify the description."
+        )
+
+    # Detect degenerate repetition (all GW lines identical after tag number)
+    if len(gw_lines) > 10:
+        normalised = [re.sub(r"^GW\s+\d+", "GW _", l) for l in gw_lines]
+        if len(set(normalised)) == 1:
+            raise ValueError(
+                f"Generated NEC deck is degenerate — all {len(gw_lines)} wires "
+                f"are identical. The AI model fell into a repetition loop. "
+                f"Try again or provide more specific dimensions in the description."
+            )
