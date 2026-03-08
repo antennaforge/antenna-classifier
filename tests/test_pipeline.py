@@ -405,6 +405,37 @@ class TestValidateDeck:
         issues = validate_deck(deck, concepts)
         assert any("COLLAPSED" in i for i in issues)
 
+    def test_collapsed_geometry_exempt_for_vertical(self):
+        # Same geometry (all wires share start point) but as a vertical
+        # with radials — this is legitimate and should NOT be flagged.
+        deck = _make_deck([
+            {"type": "GW", "params": [1, 21, 0, 0, 0, 0, 0, 5.0, 0.001]},
+            {"type": "GW", "params": [2, 11, 0, 0, 0, 2.5, 0, 0, 0.001]},
+            {"type": "GW", "params": [3, 11, 0, 0, 0, -2.5, 0, 0, 0.001]},
+            {"type": "GW", "params": [4, 11, 0, 0, 0, 0, 2.5, 0, 0.001]},
+            {"type": "GE", "params": [1]},
+            {"type": "EX", "params": [0, 1, 1, 0, 1.0, 0.0]},
+            {"type": "FR", "params": [0, 1, 0, 0, 14.175, 0]},
+            {"type": "EN"},
+        ])
+        concepts = ExtractedConcepts(antenna_type="vertical", freq_mhz=14.175)
+        issues = validate_deck(deck, concepts)
+        assert not any("COLLAPSED" in i for i in issues)
+
+    def test_collapsed_geometry_exempt_for_ground_plane(self):
+        # ground_plane type is also in the exemption set
+        deck = _make_deck([
+            {"type": "GW", "params": [1, 21, 0, 0, 0, 0, 0, 5.0, 0.001]},
+            {"type": "GW", "params": [2, 11, 0, 0, 0, 2.5, 0, 0, 0.001]},
+            {"type": "GE", "params": [1]},
+            {"type": "EX", "params": [0, 1, 1, 0, 1.0, 0.0]},
+            {"type": "FR", "params": [0, 1, 0, 0, 14.175, 0]},
+            {"type": "EN"},
+        ])
+        concepts = ExtractedConcepts(antenna_type="ground_plane", freq_mhz=14.175)
+        issues = validate_deck(deck, concepts)
+        assert not any("COLLAPSED" in i for i in issues)
+
     def test_frequency_mismatch_detected(self):
         deck = _simple_dipole_deck(freq_mhz=7.1)  # FR says 7.1
         concepts = ExtractedConcepts(
@@ -587,6 +618,53 @@ class TestGenerateDeck:
         )
         with pytest.raises(ValueError):
             generate_deck(concepts, client=client)
+
+    def test_history_passed_to_llm(self):
+        """When history is provided, messages include prior assistant/user turns."""
+        deck_json = json.dumps(_simple_dipole_deck())
+        client = _mock_client(deck_json)
+
+        concepts = ExtractedConcepts(
+            antenna_type="dipole", freq_mhz=14.175,
+        )
+        history = [
+            {"role": "assistant", "content": '{"cards": []}'},
+            {"role": "user", "content": "SWR was 5.2:1 — shorten driven element"},
+        ]
+        deck, resp = generate_deck(
+            concepts, client=client, history=history,
+        )
+        call_args = client.chat.completions.create.call_args
+        msgs = call_args.kwargs["messages"]
+        # Should be system + user + 2 history entries = 4 messages
+        assert len(msgs) == 4
+        assert msgs[2]["role"] == "assistant"
+        assert msgs[3]["role"] == "user"
+        assert "SWR was 5.2" in msgs[3]["content"]
+
+    def test_history_supersedes_feedback(self):
+        """When both history and feedback are provided, history is used."""
+        deck_json = json.dumps(_simple_dipole_deck())
+        client = _mock_client(deck_json)
+
+        concepts = ExtractedConcepts(
+            antenna_type="dipole", freq_mhz=14.175,
+        )
+        history = [
+            {"role": "assistant", "content": '{"cards": []}'},
+            {"role": "user", "content": "gain too low"},
+        ]
+        deck, resp = generate_deck(
+            concepts, client=client,
+            feedback="this should not appear",
+            history=history,
+        )
+        call_args = client.chat.completions.create.call_args
+        msgs = call_args.kwargs["messages"]
+        # history takes precedence — feedback string should NOT be appended
+        user_content = msgs[1]["content"]
+        assert "this should not appear" not in user_content
+        assert msgs[2]["role"] == "assistant"
 
 
 # ===================================================================

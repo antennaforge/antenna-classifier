@@ -1,0 +1,739 @@
+
+========================================================================
+  FORM: 3el 10m Yagi
+========================================================================
+
+--- Pipeline Steps ---
+  [1] classify    skip   Type provided: yagi
+  [2] extract     ok     freq=28.4MHz, 1 structural params
+  [3] generate    ok     14 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     557 chars
+  [6] simulate    ok     Simulation passed, goals met
+  Iterations: 1
+
+--- Extracted Concepts ---
+  Type:       yagi
+  Freq:       28.4 MHz
+  Gain:       None
+  F/B:        None
+  SWR:        None
+  Ground:     free_space
+  Elements:   {'n_elements': 3}
+  Wire dia:   None mm
+  Height:     None m
+
+--- NEC Content (first 30 lines) ---
+    1| CM 3-element Yagi-Uda for 10m band, design freq 28.4 MHz. Elements along Y, spaced along X. Free space.
+    2| CM Dimensions primary (from document/extracted): Reflector L=5.2253 m, Driven L=4.9930 m, Director L=4.6447 m; spacings: R-DE=1.9001 m, DE-Dir=1.0556 m. Wire radius=0.006 m.
+    3| CE
+    4| GW 1,33,-1.9001,-2.61265,0,-1.9001,2.61265,0,0.006
+    5| GW 2,31,0,-2.4965,0,0,2.4965,0,0.006
+    6| GW 3,29,1.0556,-2.32235,0,1.0556,2.32235,0,0.006
+    7| GE 0
+    8| LD 5,1,0,0,25000000,1,0
+    9| LD 5,2,0,0,25000000,1,0
+   10| LD 5,3,0,0,25000000,1,0
+   11| FR 0,1,0,0,28.4,0
+   12| EX 0,2,16,0,1,0
+   13| RP 0,1,361,1000,90,0,0,1
+   14| EN
+
+--- Reverse Classification ---
+  Type:       yagi
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    1.00
+  Passed:   5/5
+
+--- Buildability ---
+  Score: 75/100
+
+--- Token Usage ---
+  Prompt:     1846
+  Completion: 771
+
+  Elapsed: 11.5s
+
+========================================================================
+  FORM: 20m Moxon
+========================================================================
+
+--- Pipeline Steps ---
+  [1] classify    skip   Type provided: moxon
+  [2] extract     ok     freq=14.175MHz, 0 structural params
+  [3] generate    ok     16 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1110 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     14 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     703 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     14 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     678 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  Iterations: 3
+
+--- Extracted Concepts ---
+  Type:       moxon
+  Freq:       14.175 MHz
+  Gain:       None
+  F/B:        None
+  SWR:        None
+  Ground:     free_space
+  Elements:   {}
+  Wire dia:   None mm
+  Height:     None m
+
+--- NEC Content (first 30 lines) ---
+    1| CM Moxon rectangle (20m) free space retune attempt #2. f=14.175 MHz. Operators: adjust_tip_gap (narrow) + balance_tails (increase C, reduce D slightly). Keep overall scale from prior (A=5.286 m, spacing=1.683 m) since gain is now plausible. New: B=0.050 m, C=0.760 m, D=0.860 m. Z=0. Wire radius=0.000814 m.
+    2| CE
+    3| GW 1,11,-2.643,0.025,0,-2.643,0.76,0,0.000814
+    4| GW 2,63,-2.643,0.76,0,2.643,0.76,0,0.000814
+    5| GW 3,11,2.643,0.76,0,2.643,0.025,0,0.000814
+    6| GW 4,11,-2.643,-0.025,0,-2.643,-2.543,0,0.000814
+    7| GW 5,63,-2.643,-2.543,0,2.643,-2.543,0,0.000814
+    8| GW 6,11,2.643,-2.543,0,2.643,-0.025,0,0.000814
+    9| GE 0
+   10| LD 5,0,0,0,58001000,0,0
+   11| FR 0,1,0,0,14.175,0
+   12| EX 0,2,32,0,1,0
+   13| RP 0,37,73,0,0,0,5,5
+   14| EN
+
+--- Reverse Classification ---
+  Type:       moxon
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    0.40
+  Passed:   2/5
+
+--- Buildability ---
+  Score: 71/100
+
+--- Token Usage ---
+  Prompt:     10047
+  Completion: 2562
+
+  Elapsed: 33.9s
+
+========================================================================
+  FORM: 40m Dipole
+========================================================================
+
+--- Pipeline Steps ---
+  [1] classify    skip   Type provided: dipole
+  [2] extract     ok     freq=7.1MHz, 0 structural params
+  [3] generate    ok     9 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     279 chars
+  [6] simulate    ok     Simulation passed, goals met
+  Iterations: 1
+
+--- Extracted Concepts ---
+  Type:       dipole
+  Freq:       7.1 MHz
+  Gain:       None
+  F/B:        None
+  SWR:        None
+  Ground:     free_space
+  Elements:   {}
+  Wire dia:   None mm
+  Height:     None m
+
+--- NEC Content (first 30 lines) ---
+    1| CM Classic 40m centre-fed half-wave dipole in free space, design f=7.1 MHz. Total length 20.6899 m, height 10.5561 m, copper wire.
+    2| CE
+    3| GW 1,41,0.0,-10.345,10.5561,0.0,10.345,10.5561,0.000814
+    4| GE 0
+    5| LD 5,0,0,0,58000000,0,0
+    6| EX 0,1,21,0,1,0
+    7| FR 0,1,0,0,7.1,0
+    8| RP 0,37,73,1000,0,0,5,5
+    9| EN
+
+--- Reverse Classification ---
+  Type:       dipole
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    1.00
+  Passed:   4/4
+
+--- Buildability ---
+  Score: 92/100
+
+--- Token Usage ---
+  Prompt:     1570
+  Completion: 444
+
+  Elapsed: 6.6s
+
+========================================================================
+  FORM: 20m Vertical
+========================================================================
+
+--- Pipeline Steps ---
+  [1] classify    skip   Type provided: vertical
+  [2] extract     ok     freq=14.175MHz, 0 structural params
+  [3] generate    ok     25 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     962 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     42 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1994 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     41 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     2037 chars
+  [6] simulate    ok     Simulation passed, goals met
+  Iterations: 3
+
+--- Extracted Concepts ---
+  Type:       vertical
+  Freq:       14.175 MHz
+  Gain:       None
+  F/B:        None
+  SWR:        None
+  Ground:     free_space
+  Elements:   {}
+  Wire dia:   None mm
+  Height:     None m
+
+--- NEC Content (first 30 lines) ---
+    1| CM Classic 20m quarter-wave vertical with 32 sloped radials over free space (no ground model) to keep gain physically plausible
+    2| CM Design freq 14.175 MHz; radiator 5.023 m; radials 32 x 5.2873 m sloped down 30 deg; base at origin
+    3| CE
+    4| GW 1,33,0,0,0,0,0,5.023,0.001
+    5| GW 2,17,0,0,0,4.579484059,0,-2.64365,0.001
+    6| GW 3,17,0,0,0,4.491574663,0.893046095,-2.64365,0.001
+    7| GW 4,17,0,0,0,4.231222933,1.751786102,-2.64365,0.001
+    8| GW 5,17,0,0,0,3.808423213,2.541223408,-2.64365,0.001
+    9| GW 6,17,0,0,0,3.239416607,3.229416607,-2.64365,0.001
+   10| GW 7,17,0,0,0,2.541223408,3.808423213,-2.64365,0.001
+   11| GW 8,17,0,0,0,1.751786102,4.231222933,-2.64365,0.001
+   12| GW 9,17,0,0,0,0.893046095,4.491574663,-2.64365,0.001
+   13| GW 10,17,0,0,0,0,4.579484059,-2.64365,0.001
+   14| GW 11,17,0,0,0,-0.893046095,4.491574663,-2.64365,0.001
+   15| GW 12,17,0,0,0,-1.751786102,4.231222933,-2.64365,0.001
+   16| GW 13,17,0,0,0,-2.541223408,3.808423213,-2.64365,0.001
+   17| GW 14,17,0,0,0,-3.229416607,3.239416607,-2.64365,0.001
+   18| GW 15,17,0,0,0,-3.808423213,2.541223408,-2.64365,0.001
+   19| GW 16,17,0,0,0,-4.231222933,1.751786102,-2.64365,0.001
+   20| GW 17,17,0,0,0,-4.491574663,0.893046095,-2.64365,0.001
+   21| GW 18,17,0,0,0,-4.579484059,0,-2.64365,0.001
+   22| GW 19,17,0,0,0,-4.491574663,-0.893046095,-2.64365,0.001
+   23| GW 20,17,0,0,0,-4.231222933,-1.751786102,-2.64365,0.001
+   24| GW 21,17,0,0,0,-3.808423213,-2.541223408,-2.64365,0.001
+   25| GW 22,17,0,0,0,-3.229416607,-3.239416607,-2.64365,0.001
+   26| GW 23,17,0,0,0,-2.541223408,-3.808423213,-2.64365,0.001
+   27| GW 24,17,0,0,0,-1.751786102,-4.231222933,-2.64365,0.001
+   28| GW 25,17,0,0,0,-0.893046095,-4.491574663,-2.64365,0.001
+   29| GW 26,17,0,0,0,0,-4.579484059,-2.64365,0.001
+   30| GW 27,17,0,0,0,0.893046095,-4.491574663,-2.64365,0.001
+  ... (11 more lines)
+
+--- Reverse Classification ---
+  Type:       vertical
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    1.00
+  Passed:   4/4
+
+--- Buildability ---
+  Score: 66/100
+
+--- Token Usage ---
+  Prompt:     9204
+  Completion: 3592
+
+  Elapsed: 39.6s
+
+========================================================================
+  PDF: Cebik2a.pdf (Cebik 2-element Yagi design article)
+========================================================================
+  Type hint: yagi
+
+--- Pipeline Steps ---
+  [1] classify    skip   Type provided: yagi
+  [2] extract     ok     freq=28.4MHz, 4 structural params
+  [3] generate    ok     15 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     594 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     15 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     629 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     14 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     479 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  Iterations: 3
+
+--- Extracted Concepts ---
+  Type:       yagi
+  Freq:       28.4 MHz
+  Gain:       7.1
+  F/B:        21.0
+  SWR:        1.4
+  Ground:     
+  Elements:   {'n_elements': 3, 'driven_length': 3.505, 'director_lengths': [0.9918], 'element_spacings': [0.635, 0.9918]}
+  Wire dia:   None mm
+  Height:     None m
+
+--- NEC Content (first 30 lines) ---
+    1| CM 3-element Yagi @ 28.4 MHz (iteration): keep geometry, improve match by adjusting driven element length only
+    2| CM Prev Z=11.7+j21 ohm (too low R, inductive). Shorten driven slightly to reduce +j and raise R toward 20-30 ohm.
+    3| CE
+    4| GW 1,21,-1.5,-2.75,0,-1.5,2.75,0,0.006
+    5| GW 2,21,0,-2.55,0,0,2.55,0,0.006
+    6| GW 3,21,1.05,-2.49,0,1.05,2.49,0,0.006
+    7| GE 0
+    8| LD 5,1,0,0,25000000,1,0
+    9| LD 5,2,0,0,25000000,1,0
+   10| LD 5,3,0,0,25000000,1,0
+   11| FR 0,1,0,0,28.4,0
+   12| EX 0,2,11,0,1,0
+   13| RP 0,181,361,1000,0,0,1,1
+   14| EN
+
+--- Reverse Classification ---
+  Type:       yagi
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    0.60
+  Passed:   3/5
+
+--- Buildability ---
+  Score: 75/100
+
+--- Token Usage ---
+  Prompt:     10790
+  Completion: 2116
+
+  Elapsed: 39.4s
+
+========================================================================
+  PDF: 9107030.pdf (Quad loop antenna paper)
+========================================================================
+  Type hint: quad
+
+--- Pipeline Steps ---
+  [1] classify    skip   Type provided: quad
+  [2] extract     ok     freq=21.2MHz, 4 structural params
+  [3] generate    ok     18 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1205 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     19 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1320 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     20 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1435 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  Iterations: 3
+
+--- Extracted Concepts ---
+  Type:       quad
+  Freq:       21.2 MHz
+  Gain:       None
+  F/B:        None
+  SWR:        None
+  Ground:     
+  Elements:   {'n_elements': 2, 'reflector_perimeter': 14.6304, 'driven_perimeter': 10.256, 'element_spacings': [1.4224]}
+  Wire dia:   2.032 mm
+  Height:     1.8288 m
+
+--- NEC Content (first 30 lines) ---
+    1| CM 2-ELEMENT QUAD BEAM (15m) @ 21.2 MHz. Two square QUAD elements in Y-Z plane, spaced along X (boom). Driven element bottom side split; feed at bottom center junction. Free-space model (GE 0).
+    2| CM Optimization step: adjust_perimeters (low risk) to bring feedpoint R into 100–150 ohm range and reduce SWR. Scale both driven and reflector perimeters by 0.97 (keep reflector +5% vs driven). Spacing kept at 0.2λ (2.8282 m) to preserve F/B.
+    3| CM New dimensions: driven perimeter=13.99128 m => side=3.49782 m (half=1.74891 m). Reflector perimeter=14.690844 m => side=3.672711 m (half=1.8363555 m). Height: bottom z=1.8288 m.
+    4| CE
+    5| CM Reflector QUAD (tags 1-4) at x=-2.8282 m. z from 1.8288 to 5.501511 m.
+    6| GW 1,15,-2.8282,-1.8363555,1.8288,-2.8282,1.8363555,1.8288,0.001016
+    7| GW 2,15,-2.8282,1.8363555,1.8288,-2.8282,1.8363555,5.501511,0.001016
+    8| GW 3,15,-2.8282,1.8363555,5.501511,-2.8282,-1.8363555,5.501511,0.001016
+    9| GW 4,15,-2.8282,-1.8363555,5.501511,-2.8282,-1.8363555,1.8288,0.001016
+   10| CM Driven QUAD (tags 5-9) at x=0 m. z from 1.8288 to 5.32662 m. Bottom side split into two wires; source at end of tag 5 (junction at y=0,z=1.8288).
+   11| GW 5,8,0,-1.74891,1.8288,0,0,1.8288,0.001016
+   12| GW 6,8,0,0,1.8288,0,1.74891,1.8288,0.001016
+   13| GW 7,15,0,1.74891,1.8288,0,1.74891,5.32662,0.001016
+   14| GW 8,15,0,1.74891,5.32662,0,-1.74891,5.32662,0.001016
+   15| GW 9,15,0,-1.74891,5.32662,0,-1.74891,1.8288,0.001016
+   16| GE 0
+   17| FR 0,1,0,0,21.2,0
+   18| EX 0,5,8,0,1,0
+   19| RP 0,37,73,0,0,0,5,5
+   20| EN
+
+--- Reverse Classification ---
+  Type:       quad
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    0.60
+  Passed:   3/5
+
+--- Buildability ---
+  Score: 73/100
+
+--- Token Usage ---
+  Prompt:     9772
+  Completion: 2366
+
+  Elapsed: 38.6s
+
+========================================================================
+  PDF: Ceecom_10-11m_Moxon_user.pdf (Ceecom Moxon user manual)
+========================================================================
+  Type hint: moxon
+
+--- Pipeline Steps ---
+  [1] classify    skip   Type provided: moxon
+  [2] extract     ok     freq=28.5MHz, 0 structural params
+  [3] generate    ok     18 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1116 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     18 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1264 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     18 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1590 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  Iterations: 3
+
+--- Extracted Concepts ---
+  Type:       moxon
+  Freq:       28.5 MHz
+  Gain:       6.0
+  F/B:        42.0
+  SWR:        1.6
+  Ground:     free_space
+  Elements:   {}
+  Wire dia:   None mm
+  Height:     10.0 m
+
+--- NEC Content (first 30 lines) ---
+    1| CM Moxon rectangle @28.5 MHz, free space, Z=10.0 m. Major correction: previous geometry had tails bent the wrong way (tips between elements). This deck uses standard Moxon: driven tails bend toward reflector, reflector tails bend toward driven, with tips near each other on the OUTSIDE.
+    2| CM Dimensions used (document/calculator reference): A=3.7643 m, spacing=1.0871 m, tip gap B=0.0595 m, driven tail C=0.3648 m, reflector tail D=0.6628 m. Main-wire Y positions: driven at +0.54355, reflector at -0.54355.
+    3| CM Tip Y positions (outside): driven tips at Yd + C = +0.90835. reflector tips at Yr - D = -1.20635. Tip-to-tip separation across outside = 0.0595 m enforced by shifting both tips symmetrically about Y=0: driven tip=+0.02975, reflector tip=-0.02975, then set tails accordingly.
+    4| CM Implemented symmetric outside-tip placement about Y=0 to realize B exactly: driven tip Y=+0.02975, reflector tip Y=-0.02975. Therefore driven tail length becomes C=Yd - tip = 0.51380 m, reflector tail length becomes D=tip - Yr = 0.51380 m (balanced tails).
+    5| CM Wire radius 1.0 mm. Segmentation: main wires 41 seg, tails 13 seg (feed at center seg of driven main).
+    6| CE
+    7| GW 1,13,-1.88215,0.02975,10.0,-1.88215,0.54355,10.0,0.001
+    8| GW 2,41,-1.88215,0.54355,10.0,1.88215,0.54355,10.0,0.001
+    9| GW 3,13,1.88215,0.54355,10.0,1.88215,0.02975,10.0,0.001
+   10| GW 4,13,-1.88215,-0.02975,10.0,-1.88215,-0.54355,10.0,0.001
+   11| GW 5,41,-1.88215,-0.54355,10.0,1.88215,-0.54355,10.0,0.001
+   12| GW 6,13,1.88215,-0.54355,10.0,1.88215,-0.02975,10.0,0.001
+   13| GE 0
+   14| LD 5,0,0,0,58001000,0,0
+   15| EX 0,2,21,0,1,0
+   16| FR 0,1,0,0,28.5,0
+   17| RP 0,181,361,0,0,0,1,1
+   18| EN
+
+--- Reverse Classification ---
+  Type:       moxon
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    0.40
+  Passed:   2/5
+
+--- Buildability ---
+  Score: 71/100
+
+--- Token Usage ---
+  Prompt:     12735
+  Completion: 3218
+
+  Elapsed: 51.3s
+
+========================================================================
+  PDF: 3 BAND QUAD LOOP.pdf (Multi-band quad loop)
+========================================================================
+  Type hint: quad
+
+--- Pipeline Steps ---
+  [1] classify    skip   Type provided: quad
+  [2] extract     ok     freq=14.175MHz, 5 structural params
+  [3] generate    ok     25 cards
+  [4] validate    ok     0 critical, 1 advisory
+  [5] convert     ok     1098 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     26 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1248 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     26 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1409 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  Iterations: 3
+
+--- Extracted Concepts ---
+  Type:       quad
+  Freq:       14.175 MHz
+  Gain:       None
+  F/B:        None
+  SWR:        None
+  Ground:     
+  Elements:   {'n_elements': 4, 'reflector_perimeter': 20.55, 'driven_perimeter': 14.43, 'director_perimeters': [9.6], 'element_spacings': [1.08, 0.85, 2.55, 3.63]}
+  Wire dia:   13.4 mm
+  Height:     None m
+
+--- NEC Content (first 30 lines) ---
+    1| CM 4-element QUAD beam (reflector, driven, 2 directors). Square quad elements in Y-Z plane, spaced along X (boom).
+    2| CM Design freq 14.175 MHz. Use physics-based perimeters for 20m quad: Driven=21.5724m, Reflector=22.6510m (+5%), Director1=20.4938m (-5%), Director2=19.8786m (-7.9%).
+    3| CM Element spacings set to typical 0.2/0.15/0.2 lambda: R->DE=4.23m, DE->D1=3.17m, D1->D2=4.23m. Wire dia 13.4mm (r=0.0067m). Feed at bottom center of driven (split bottom side). Free space GE 0.
+    4| CE
+    5| GW 1,21,-4.23,-2.831375,0,-4.23,2.831375,0,0.0067
+    6| GW 2,21,-4.23,2.831375,0,-4.23,2.831375,5.66275,0.0067
+    7| GW 3,21,-4.23,2.831375,5.66275,-4.23,-2.831375,5.66275,0.0067
+    8| GW 4,21,-4.23,-2.831375,5.66275,-4.23,-2.831375,0,0.0067
+    9| GW 5,11,0,-2.69655,0,0,0,0,0.0067
+   10| GW 6,11,0,0,0,0,2.69655,0,0.0067
+   11| GW 7,21,0,2.69655,0,0,2.69655,5.3931,0.0067
+   12| GW 8,21,0,2.69655,5.3931,0,-2.69655,5.3931,0.0067
+   13| GW 9,21,0,-2.69655,5.3931,0,-2.69655,0,0.0067
+   14| GW 10,19,3.17,-2.561725,0,3.17,2.561725,0,0.0067
+   15| GW 11,19,3.17,2.561725,0,3.17,2.561725,5.12345,0.0067
+   16| GW 12,19,3.17,2.561725,5.12345,3.17,-2.561725,5.12345,0.0067
+   17| GW 13,19,3.17,-2.561725,5.12345,3.17,-2.561725,0,0.0067
+   18| GW 14,19,7.4,-2.484825,0,7.4,2.484825,0,0.0067
+   19| GW 15,19,7.4,2.484825,0,7.4,2.484825,4.96965,0.0067
+   20| GW 16,19,7.4,2.484825,4.96965,7.4,-2.484825,4.96965,0.0067
+   21| GW 17,19,7.4,-2.484825,4.96965,7.4,-2.484825,0,0.0067
+   22| GE 0
+   23| FR 0,1,0,0,14.175,0
+   24| EX 0,5,11,0,1,0
+   25| RP 0,37,73,0,0,0,5,5
+   26| EN
+
+--- Reverse Classification ---
+  Type:       quad
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    0.80
+  Passed:   4/5
+
+--- Buildability ---
+  Score: 64/100
+
+--- Token Usage ---
+  Prompt:     10435
+  Completion: 2844
+
+  Elapsed: 33.9s
+
+========================================================================
+  PDF: POTA-PERformer-Antenna-by-KJ6ER-2023-03-1-1.pdf (POTA field antenna (type unknown, let pipeline classify))
+========================================================================
+
+--- Pipeline Steps ---
+  [1] classify    ok     vertical (confidence 0.95)
+  [2] extract     ok     freq=7.1MHz, 3 structural params
+  [3] generate    ok     16 cards
+  [4] validate    ok     0 critical, 5 advisory
+  [5] convert     ok     431 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     26 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1090 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     26 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1058 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  Iterations: 3
+
+--- Extracted Concepts ---
+  Type:       vertical
+  Freq:       7.1 MHz
+  Gain:       None
+  F/B:        None
+  SWR:        1.1
+  Ground:     
+  Elements:   {'radiator_height': 1.83, 'n_radials': 2, 'radial_length': 10.06}
+  Wire dia:   1.024 mm
+  Height:     None m
+
+--- NEC Content (first 30 lines) ---
+    1| CM 7.1 MHz quarter-wave vertical over perfect ground (GN 1) with 16 sloped radials.
+    2| CM Adjusted to avoid free-space gain artifact: use GE 1 (ground present) with GN 1. Radiator 10.0283 m. 16 radials 10.5561 m, slope 30 deg down.
+    3| CE
+    4| GW 1,67,0,0,0,0,0,10.0283,0.000512
+    5| GW 2,71,0,0,0,9.1423,0,-5.2781,0.000512
+    6| GW 3,71,0,0,0,8.4473,3.4992,-5.2781,0.000512
+    7| GW 4,71,0,0,0,6.4658,6.4658,-5.2781,0.000512
+    8| GW 5,71,0,0,0,3.4992,8.4473,-5.2781,0.000512
+    9| GW 6,71,0,0,0,0,9.1423,-5.2781,0.000512
+   10| GW 7,71,0,0,0,-3.4992,8.4473,-5.2781,0.000512
+   11| GW 8,71,0,0,0,-6.4658,6.4658,-5.2781,0.000512
+   12| GW 9,71,0,0,0,-8.4473,3.4992,-5.2781,0.000512
+   13| GW 10,71,0,0,0,-9.1423,0,-5.2781,0.000512
+   14| GW 11,71,0,0,0,-8.4473,-3.4992,-5.2781,0.000512
+   15| GW 12,71,0,0,0,-6.4658,-6.4658,-5.2781,0.000512
+   16| GW 13,71,0,0,0,-3.4992,-8.4473,-5.2781,0.000512
+   17| GW 14,71,0,0,0,0,-9.1423,-5.2781,0.000512
+   18| GW 15,71,0,0,0,3.4992,-8.4473,-5.2781,0.000512
+   19| GW 16,71,0,0,0,6.4658,-6.4658,-5.2781,0.000512
+   20| GW 17,71,0,0,0,8.4473,-3.4992,-5.2781,0.000512
+   21| GE 1
+   22| GN 1
+   23| EX 0,1,1,0,1,0
+   24| FR 0,1,0,0,7.1,0
+   25| RP 0,37,73,1000,0,0,5,5
+   26| EN
+
+--- Reverse Classification ---
+  Type:       vertical
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    0.75
+  Passed:   3/4
+
+--- Buildability ---
+  Score: 66/100
+
+--- Token Usage ---
+  Prompt:     11245
+  Completion: 3642
+
+  Elapsed: 45.4s
+
+========================================================================
+  PDF: 20m-elevated-vertical-g8ode-iss-1-31.pdf (Elevated vertical for 20m)
+========================================================================
+  Type hint: vertical
+
+--- Pipeline Steps ---
+  [1] classify    skip   Type provided: vertical
+  [2] extract     ok     freq=14.175MHz, 3 structural params
+  [3] generate    ok     12 cards
+  [4] validate    ok     0 critical, 1 advisory
+  [5] convert     ok     361 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     25 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1557 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  [3] generate    ok     25 cards
+  [4] validate    ok     All checks passed
+  [5] convert     ok     1552 chars
+  [6] simulate    fail   sim_ok=True, goal_ok=False
+  [7] feedback    ok     Routing to step 3
+  Iterations: 3
+
+--- Extracted Concepts ---
+  Type:       vertical
+  Freq:       14.175 MHz
+  Gain:       None
+  F/B:        None
+  SWR:        3.4
+  Ground:     
+  Elements:   {'radiator_height': 5.1, 'n_radials': 4, 'radial_length': 5.1}
+  Wire dia:   None mm
+  Height:     None m
+
+--- NEC Content (first 30 lines) ---
+    1| CM Quarter-wave vertical with 16 sloped radials over perfect ground. f0=14.175 MHz. Radiator height=5.10 m (doc). Radials length=5.10 m (doc), sloped down 30 deg. Feed at base segment (seg 1) to model vertical monopole over ground.
+    2| CE
+    3| GW 1,21,0,0,0,0,0,5.1,0.001
+    4| GW 2,21,0,0,0,4.416729559300637,0,-2.5499999999999994,0.001
+    5| GW 3,21,0,0,0,4.079785658697549,1.6892463972414662,-2.5499999999999994,0.001
+    6| GW 4,21,0,0,0,3.122562137448192,3.1225621374481913,-2.5499999999999994,0.001
+    7| GW 5,21,0,0,0,1.6892463972414664,4.079785658697549,-2.5499999999999994,0.001
+    8| GW 6,21,0,0,0,2.704365e-16,4.416729559300637,-2.5499999999999994,0.001
+    9| GW 7,21,0,0,0,-1.6892463972414657,4.079785658697549,-2.5499999999999994,0.001
+   10| GW 8,21,0,0,0,-3.122562137448191,3.122562137448192,-2.5499999999999994,0.001
+   11| GW 9,21,0,0,0,-4.079785658697549,1.6892463972414666,-2.5499999999999994,0.001
+   12| GW 10,21,0,0,0,-4.416729559300637,5.40873e-16,-2.5499999999999994,0.001
+   13| GW 11,21,0,0,0,-4.079785658697549,-1.6892463972414655,-2.5499999999999994,0.001
+   14| GW 12,21,0,0,0,-3.122562137448192,-3.122562137448191,-2.5499999999999994,0.001
+   15| GW 13,21,0,0,0,-1.689246397241467,-4.079785658697549,-2.5499999999999994,0.001
+   16| GW 14,21,0,0,0,-8.113094e-16,-4.416729559300637,-2.5499999999999994,0.001
+   17| GW 15,21,0,0,0,1.6892463972414655,-4.079785658697549,-2.5499999999999994,0.001
+   18| GW 16,21,0,0,0,3.1225621374481904,-3.122562137448192,-2.5499999999999994,0.001
+   19| GW 17,21,0,0,0,4.079785658697549,-1.689246397241467,-2.5499999999999994,0.001
+   20| GE 1
+   21| GN 1
+   22| EX 0,1,1,0,1,0
+   23| FR 0,3,0,0,14.175,14.025
+   24| RP 0,37,73,0,0,0,5,5
+   25| EN
+
+--- Reverse Classification ---
+  Type:       vertical
+  Confidence: 0.80
+
+--- Goal Verdict ---
+  Score:    0.75
+  Passed:   3/4
+
+--- Buildability ---
+  Score: 66/100
+
+--- Token Usage ---
+  Prompt:     11004
+  Completion: 3781
+
+  Elapsed: 46.3s
+
+========================================================================
+  SUMMARY
+========================================================================
+  Tests: 10   OK: 10   FAIL: 0   nec2c pass: 3
+
+  Test                                        Time  Status  nec2c          Type   Conf   Goals  Iter     Tok
+  ----------------------------------------------------------------------------------------------------------
+  3el 10m Yagi                               11.5s      OK   PASS          yagi   0.80    1.00     1    2617
+  20m Moxon                                  33.9s      OK   FAIL         moxon   0.80    0.40     3   12609
+  40m Dipole                                  6.6s      OK   PASS        dipole   0.80    1.00     1    2014
+  20m Vertical                               39.6s      OK   PASS      vertical   0.80    1.00     3   12796
+  Cebik2a.pdf                                39.4s      OK   FAIL          yagi   0.80    0.60     3   12906
+  9107030.pdf                                38.6s      OK   FAIL          quad   0.80    0.60     3   12138
+  Ceecom_10-11m_Moxon_user.pdf               51.3s      OK   FAIL         moxon   0.80    0.40     3   15953
+  3 BAND QUAD LOOP.pdf                       33.9s      OK   FAIL          quad   0.80    0.80     3   13279
+  POTA-PERformer-Antenna-by-KJ6ER-2023-03-1-1.pdf   45.4s      OK   FAIL      vertical   0.80    0.75     3   14887
+  20m-elevated-vertical-g8ode-iss-1-31.pdf   46.3s      OK   FAIL      vertical   0.80    0.75     3   14785
+
+  Report: /home/herman/workspace/antenna-classifier/scripts/../reports/pipeline_test_results.json

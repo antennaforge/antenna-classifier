@@ -54,6 +54,13 @@ ANTENNA_TYPES = [
     "rhombic", "beverage", "discone", "turnstile", "half_square",
 ]
 
+# Hub-and-spoke antenna types where all wires legitimately share a common
+# feedpoint (e.g., vertical + radials).  Exempt from collapsed-geometry check.
+_RADIAL_HUB_TYPES = {
+    "vertical", "ground_plane", "j_pole", "end_fed", "collinear",
+    "discone", "turnstile",
+}
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
@@ -746,8 +753,15 @@ def generate_deck(
     client: Any = None,
     model: str = _ENGINEERING_MODEL,
     feedback: str = "",
+    history: list[dict[str, str]] | None = None,
 ) -> tuple[dict[str, Any], Any]:
     """Step 3: Generate a JSON NEC deck from structured concepts.
+
+    Parameters
+    ----------
+    history : list[dict] | None
+        Previous assistant/user message pairs for OODA conversation continuity.
+        Each dict has ``role`` and ``content`` keys.
 
     Returns (json_deck, api_response).
     """
@@ -778,15 +792,25 @@ def generate_deck(
         type_context=type_context,
     )
 
-    if feedback:
-        user_msg += f"\n\n--- FEEDBACK FROM PREVIOUS ATTEMPT ---\n{feedback}\n---"
+    # Build message list: system + user + optional OODA conversation history
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": _GENERATE_SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
+
+    if history:
+        # Append previous assistant/user exchanges so the LLM sees what it
+        # generated before and the specific feedback it received.
+        messages.extend(history)
+    elif feedback:
+        # First-iteration fallback: append flat feedback to user prompt
+        messages[-1]["content"] += (
+            f"\n\n--- FEEDBACK FROM PREVIOUS ATTEMPT ---\n{feedback}\n---"
+        )
 
     resp = client.chat.completions.create(
         model=model,
-        messages=[
-            {"role": "system", "content": _GENERATE_SYSTEM},
-            {"role": "user", "content": user_msg},
-        ],
+        messages=messages,
         temperature=0.3,
         max_completion_tokens=8192,
     )
@@ -906,7 +930,9 @@ def validate_deck(
             )
 
     # --- Collapsed geometry check ---
-    if len(gw_cards) >= 2:
+    # Hub-and-spoke types (verticals with radials, etc.) legitimately share
+    # a common feedpoint for all wires — exempt them from this check.
+    if len(gw_cards) >= 2 and concepts.antenna_type not in _RADIAL_HUB_TYPES:
         starts = set()
         for gw in gw_cards:
             p = gw.get("params", [])
@@ -1237,6 +1263,11 @@ def run_pipeline(
     # Steps 3-7: Generate → Validate → Convert → Simulate → Feedback
     # ===================================================================
     feedback = ""
+    # OODA conversation history: list of {"role": ..., "content": ...} dicts
+    # that accumulate across iterations so the LLM sees its previous output
+    # and the specific, data-rich feedback it received.
+    ooda_history: list[dict[str, str]] = []
+
     for iteration in range(1 + max_retries):
         result.iterations = iteration + 1
 
@@ -1244,9 +1275,13 @@ def run_pipeline(
         log.info("Pipeline step 3 (iter %d): generating JSON deck", iteration + 1)
         try:
             deck, gen_resp = generate_deck(
-                concepts, client=client, model=model, feedback=feedback,
+                concepts, client=client, model=model,
+                feedback=feedback,
+                history=ooda_history if ooda_history else None,
             )
             _track_usage(result, gen_resp)
+            # Capture LLM response for conversation continuity
+            last_llm_response = gen_resp.choices[0].message.content or ""
             result.json_deck = deck
             result.steps.append(StepLog(
                 step=3, name="generate", status="ok",
@@ -1280,11 +1315,17 @@ def run_pipeline(
 
             if critical:
                 log.warning("Step 4: %d critical issues", len(critical))
-                feedback = "Validation found critical issues:\n" + \
+                crit_feedback = "Validation found critical issues:\n" + \
                     "\n".join(f"  • {i}" for i in critical)
                 if advisory:
-                    feedback += "\nAdvisory:\n" + \
+                    crit_feedback += "\nAdvisory:\n" + \
                         "\n".join(f"  • {i}" for i in advisory)
+                # Build OODA history: LLM sees what it produced + why it failed
+                ooda_history.append({"role": "assistant", "content": last_llm_response})
+                ooda_history.append({"role": "user", "content": crit_feedback +
+                    "\n\nPlease output a corrected JSON deck that fixes all "
+                    "critical issues above."})
+                feedback = ""  # history supersedes flat feedback
                 continue
         else:
             result.steps.append(StepLog(
@@ -1356,23 +1397,90 @@ def run_pipeline(
                 log.info("Step 7: no further retries")
                 break
 
-            # Use policy-driven feedback if available
+            # --- OODA: Build data-rich feedback with simulation metrics ---
             from .nec_policies import policy_for_type
             policy = policy_for_type(concepts.antenna_type)
+
+            # Extract actual simulation measurements for the LLM
+            sim_metrics_parts: list[str] = []
+            sim_data = eval_result.get("sim_result")
+            if sim_data and isinstance(sim_data, dict):
+                swr_info = sim_data.get("swr_sweep")
+                if swr_info:
+                    min_swr = swr_info.get("min_swr")
+                    res_freq = swr_info.get("resonant_freq_mhz")
+                    bw = swr_info.get("bandwidth_2to1_mhz")
+                    if min_swr is not None:
+                        sim_metrics_parts.append(
+                            f"SWR: {min_swr:.2f}:1 at {res_freq:.3f} MHz"
+                        )
+                    if bw is not None:
+                        sim_metrics_parts.append(
+                            f"2:1 SWR bandwidth: {bw:.3f} MHz"
+                        )
+                imp_info = sim_data.get("impedance_sweep")
+                if imp_info:
+                    r_vals = imp_info.get("r", [])
+                    x_vals = imp_info.get("x", [])
+                    if r_vals and x_vals:
+                        mid = len(r_vals) // 2
+                        sim_metrics_parts.append(
+                            f"Impedance at center: "
+                            f"{r_vals[mid]:.1f} + j{x_vals[mid]:.1f} Ω"
+                        )
+                pat_info = sim_data.get("radiation_pattern")
+                if pat_info:
+                    max_gain = pat_info.get("max_gain_dbi")
+                    fb = pat_info.get("front_to_back_db")
+                    if max_gain is not None:
+                        sim_metrics_parts.append(
+                            f"Max gain: {max_gain:.2f} dBi"
+                        )
+                    if fb is not None:
+                        sim_metrics_parts.append(
+                            f"Front-to-back ratio: {fb:.1f} dB"
+                        )
+
+            # Build score summary for the policy
             score_summary: dict[str, Any] = {}
             gv = eval_result.get("goal_verdict")
             if gv:
                 score_summary["goal_score"] = f"{gv.get('score', 0):.2f}"
+                score_summary["goal_checks"] = (
+                    f"{gv.get('checks_passed', 0)}/{gv.get('checks_total', 0)}"
+                )
             bld = eval_result.get("buildability")
             if bld:
                 score_summary["buildability"] = f"{bld.get('score', 0):.0f}/100"
 
-            feedback = policy.improvement_prompt(
-                feedback=eval_result.get("feedback", []) + (issues or []),
+            # Use the type-specific policy for structured improvement prompt
+            all_feedback = list(analysis.get("feedback", []))
+            all_feedback.extend(eval_result.get("feedback", []))
+            if issues:
+                all_feedback.extend(issues)
+
+            improvement_text = policy.improvement_prompt(
+                feedback=all_feedback,
                 score_summary=score_summary,
             )
-            log.info("Step 7: routing to step %d with %d chars feedback",
-                     retry_step, len(feedback))
+
+            # Prepend actual simulation measurements so the LLM knows exactly
+            # what the antenna achieved and what needs to change
+            if sim_metrics_parts:
+                improvement_text = (
+                    "ACTUAL SIMULATION RESULTS from nec2c:\n"
+                    + "\n".join(f"  • {m}" for m in sim_metrics_parts)
+                    + "\n\n" + improvement_text
+                )
+
+            # Append to OODA history so the LLM sees the full conversation
+            ooda_history.append({"role": "assistant", "content": last_llm_response})
+            ooda_history.append({"role": "user", "content": improvement_text})
+            feedback = ""  # history supersedes flat feedback
+            log.info("Step 7: routing to step %d with %d chars feedback "
+                     "(%d sim metrics), history len=%d",
+                     retry_step, len(improvement_text),
+                     len(sim_metrics_parts), len(ooda_history))
 
     return result
 
