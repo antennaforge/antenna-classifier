@@ -1,0 +1,657 @@
+/* ============================================================
+   platform.css — AntennaForge Unified Design System
+   Phase A Foundation · 2026-03-07
+   
+   Purpose: Single source of truth for CSS variables, typography,
+   top nav bar, cards, buttons, and shared component styles.
+   Consumed by hamfeeds base.html and antenna-classifier via nginx.
+   ============================================================ */
+
+/* ---------- 1. Design Tokens ---------- */
+
+:root {
+    /* 1.1 Base Palette — "Warm Dark" */
+    --bg:              #0e1225;
+    --surface:         #161a2e;
+    --surface-raised:  #1e2340;
+    --border:          #2a3050;
+    --border-subtle:   #1e2340;
+    --text:            #e8ecf4;
+    --text-muted:      #8b92a8;
+    --text-faint:      #7e8da3;
+
+    /* 1.2 Accent Palette — "Aurora" */
+    --accent-primary:       #8b5cf6;
+    --accent-primary-soft:  #a78bfa;
+    --accent-secondary:     #10b981;
+    --accent-secondary-soft:#34d399;
+    --accent-warm:          #f59e0b;
+    --accent-danger:        #ef4444;
+
+    /* 1.3 Special Surfaces */
+    --hero-gradient: linear-gradient(135deg, #0e1225 0%, #1a1040 50%, #241535 100%);
+    --aurora-glow:   radial-gradient(circle at 8% 12%, rgba(16, 185, 129, 0.08), transparent 40%),
+                     radial-gradient(circle at 88% 8%, rgba(139, 92, 246, 0.10), transparent 45%),
+                     radial-gradient(circle at 50% 95%, rgba(245, 158, 11, 0.06), transparent 50%);
+
+    /* 1.4 Nav */
+    --nav-bg:     #0b0f1e;
+    --nav-height: 56px;
+    --nav-active: rgba(139, 92, 246, 0.15);
+    --nav-hover:  rgba(139, 92, 246, 0.08);
+
+    /* 1.5 Typography */
+    --font-sans:  'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono:  'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+
+    /* 1.6 Radii */
+    --radius-sm:  6px;
+    --radius-md:  8px;
+    --radius-lg: 12px;
+}
+
+/* ---------- 2. Reset & Base ---------- */
+
+*,
+*::before,
+*::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    color: var(--accent-primary-soft);
+    text-decoration: none;
+}
+a:hover {
+    color: var(--accent-primary);
+}
+
+/* ---------- 3. Top Nav Bar ---------- */
+
+.platform-nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--nav-height);
+    background: var(--nav-bg);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    z-index: 1000;
+    gap: 4px;
+}
+
+.platform-nav__brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    color: var(--text);
+    font-weight: 700;
+    font-size: 16px;
+    margin-right: 24px;
+    flex-shrink: 0;
+}
+
+.platform-nav__brand-icon {
+    color: var(--accent-primary);
+    font-size: 18px;
+}
+
+.platform-nav__links {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.platform-nav__link {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: color 0.15s, background 0.15s;
+    position: relative;
+}
+
+.platform-nav__link:hover {
+    color: var(--text);
+    background: var(--nav-hover);
+}
+
+.platform-nav__link.active {
+    color: var(--accent-primary-soft);
+    background: var(--nav-active);
+}
+
+.platform-nav__link.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 14px;
+    right: 14px;
+    height: 2px;
+    background: var(--accent-primary);
+    border-radius: 1px;
+}
+
+.platform-nav__link-icon {
+    font-size: 15px;
+    line-height: 1;
+}
+
+/* Right section: user menu */
+.platform-nav__right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.platform-nav__user-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    position: relative;
+}
+
+.platform-nav__user-btn:hover {
+    color: var(--text);
+    border-color: var(--accent-primary);
+    background: var(--nav-hover);
+}
+
+.platform-nav__user-btn .caret {
+    font-size: 10px;
+    opacity: 0.6;
+}
+
+/* Dropdown */
+.platform-nav__dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 180px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+    z-index: 1010;
+}
+
+.platform-nav__dropdown.open {
+    display: block;
+}
+
+.platform-nav__dropdown-item {
+    display: block;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 13px;
+    transition: color 0.15s, background 0.15s;
+}
+
+.platform-nav__dropdown-item:hover {
+    color: var(--text);
+    background: var(--nav-hover);
+}
+
+.platform-nav__dropdown-item--danger {
+    color: var(--accent-danger);
+}
+
+.platform-nav__dropdown-item--danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--accent-danger);
+}
+
+.platform-nav__dropdown-sep {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: 4px 6px;
+}
+
+/* Auth links (Login / Sign Up for anonymous) */
+.platform-nav__auth-link {
+    padding: 8px 16px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.15s;
+}
+
+.platform-nav__auth-link--login {
+    color: var(--text-muted);
+}
+.platform-nav__auth-link--login:hover {
+    color: var(--text);
+}
+
+.platform-nav__auth-link--signup {
+    background: var(--accent-primary);
+    color: #fff;
+}
+.platform-nav__auth-link--signup:hover {
+    background: var(--accent-primary-soft);
+}
+
+/* Hamburger (mobile) */
+.platform-nav__hamburger {
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    width: 36px;
+    height: 36px;
+    padding: 6px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: background 0.15s;
+}
+
+.platform-nav__hamburger:hover {
+    background: var(--nav-hover);
+}
+
+.platform-nav__hamburger span {
+    display: block;
+    width: 100%;
+    height: 2px;
+    background: var(--text-muted);
+    border-radius: 1px;
+    transition: transform 0.25s, opacity 0.25s;
+}
+
+/* Mobile overlay */
+.platform-nav__overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    top: var(--nav-height);
+    background: var(--nav-bg);
+    z-index: 999;
+    flex-direction: column;
+    padding: 16px 20px;
+    overflow-y: auto;
+}
+
+.platform-nav__overlay.open {
+    display: flex;
+}
+
+.platform-nav__overlay .platform-nav__link {
+    padding: 14px 16px;
+    font-size: 16px;
+    border-radius: var(--radius-md);
+}
+
+.platform-nav__overlay .platform-nav__link.active {
+    background: var(--nav-active);
+}
+
+.platform-nav__overlay .platform-nav__link.active::after {
+    display: none;
+}
+
+.platform-nav__overlay-sep {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: 8px 0;
+}
+
+.platform-nav__overlay-user {
+    padding: 14px 16px;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ---------- 4. Main Content ---------- */
+
+.main-content {
+    padding-top: var(--nav-height);
+    min-height: 100vh;
+}
+
+/* ---------- 5. Cards ---------- */
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.08);
+}
+
+.card--raised {
+    background: var(--surface-raised);
+}
+
+/* ---------- 6. Buttons ---------- */
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-decoration: none;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn--primary {
+    background: var(--accent-primary);
+    color: #fff;
+}
+.btn--primary:hover:not(:disabled) {
+    background: var(--accent-primary-soft);
+}
+
+.btn--secondary {
+    background: transparent;
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+.btn--secondary:hover:not(:disabled) {
+    background: var(--nav-hover);
+    color: var(--accent-primary-soft);
+}
+
+.btn--success {
+    background: var(--accent-secondary);
+    color: #fff;
+}
+.btn--success:hover:not(:disabled) {
+    background: var(--accent-secondary-soft);
+}
+
+.btn--danger {
+    background: var(--accent-danger);
+    color: #fff;
+}
+.btn--danger:hover:not(:disabled) {
+    background: #f87171;
+}
+
+.btn--ghost {
+    background: transparent;
+    color: var(--text-muted);
+}
+.btn--ghost:hover:not(:disabled) {
+    background: var(--surface);
+    color: var(--text);
+}
+
+.btn--sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+/* ---------- 7. Typography ---------- */
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1.3;
+}
+
+h1 { font-size: 2rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.25rem; }
+h4 { font-size: 1.1rem; }
+
+.text-muted { color: var(--text-muted); }
+.text-faint { color: var(--text-faint); }
+.font-mono  { font-family: var(--font-mono); }
+
+/* ---------- 8. Status Indicators ---------- */
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.status-dot--live {
+    background: var(--accent-secondary);
+    animation: pulse-live 2s ease-in-out infinite;
+}
+
+.status-dot--warning {
+    background: var(--accent-warm);
+}
+
+.status-dot--error {
+    background: var(--accent-danger);
+}
+
+.status-dot--info {
+    background: #58a6ff;
+}
+
+@keyframes pulse-live {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* ---------- 9. Info Button & Modal ---------- */
+
+.info-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: none;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-left: 8px;
+    color: var(--bg);
+    background: #60a5fa;
+}
+
+.info-button.red {
+    background: #f87171;
+}
+
+.info-button:focus-visible {
+    outline: 2px solid var(--text-muted);
+    outline-offset: 2px;
+}
+
+.info-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.7);
+    z-index: 2100;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.info-modal.active {
+    display: flex;
+}
+
+.info-modal-content {
+    background: var(--nav-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    max-width: 520px;
+    width: 100%;
+    padding: 18px;
+    color: var(--text);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.info-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.info-modal-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.info-modal-close {
+    background: transparent;
+    border: none;
+    color: var(--accent-danger);
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.info-modal-copy {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: #93c5fd;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 4px 8px;
+    margin-right: 8px;
+}
+
+.info-modal-copy[hidden] {
+    display: none;
+}
+
+.info-modal-body {
+    font-size: 12px;
+    color: #cbd5f5;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow: auto;
+    max-height: calc(85vh - 72px);
+}
+
+.info-modal-body.is-code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+    tab-size: 4;
+}
+
+.info-modal-body .json-key     { color: #93c5fd; }
+.info-modal-body .json-string  { color: #86efac; }
+.info-modal-body .json-number  { color: #fca5a5; }
+.info-modal-body .json-boolean { color: #fcd34d; }
+.info-modal-body .json-null    { color: #c4b5fd; }
+
+/* ---------- 10. Responsive Breakpoints ---------- */
+
+/* Tablet: compact nav labels */
+@media (max-width: 1023px) {
+    .platform-nav__link {
+        padding: 8px 10px;
+        font-size: 13px;
+    }
+    .platform-nav__link-icon {
+        font-size: 16px;
+    }
+    .platform-nav__brand {
+        margin-right: 12px;
+    }
+}
+
+/* Mobile: hamburger + overlay */
+@media (max-width: 767px) {
+    .platform-nav__links {
+        display: none;
+    }
+    .platform-nav__right .platform-nav__user-btn,
+    .platform-nav__right .platform-nav__auth-link {
+        display: none;
+    }
+    .platform-nav__hamburger {
+        display: flex;
+    }
+    .platform-nav__brand span:not(.platform-nav__brand-icon) {
+        display: none;
+    }
+}
+
+/* ---------- 11. Utility ---------- */
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
