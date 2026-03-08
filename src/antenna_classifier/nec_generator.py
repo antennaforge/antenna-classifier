@@ -21,6 +21,7 @@ import os
 import pathlib
 import re
 import tempfile
+from dataclasses import dataclass, field
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -238,6 +239,101 @@ def _guess_freq_mhz(text: str, antenna_type: str = "") -> float:
         return _BAND_CENTRES[m.group(1)]
 
     return 14.175  # 20 m default
+
+
+# ---------------------------------------------------------------------------
+# Design-goal extraction from document text
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DocumentGoals:
+    """Design goals extracted from a PDF or web page."""
+
+    freq_mhz: float = 0.0          # primary design frequency
+    bands: list[str] = field(default_factory=list)  # band labels found
+    gain_dbi: float | None = None   # stated gain in dBi (converted from dBd if needed)
+    fb_db: float | None = None      # front-to-back ratio in dB
+    max_swr: float | None = None    # target SWR (e.g. 1.5)
+
+    def prompt_block(self) -> str:
+        """Format goals as an LLM prompt block.  Empty string if nothing found."""
+        lines: list[str] = []
+        if self.gain_dbi is not None:
+            lines.append(f"  • Target gain: {self.gain_dbi:.1f} dBi")
+        if self.fb_db is not None:
+            lines.append(f"  • Target front-to-back ratio: ≥ {self.fb_db:.0f} dB")
+        if self.max_swr is not None:
+            lines.append(f"  • Target SWR: ≤ {self.max_swr:.1f}:1")
+        if self.bands:
+            lines.append(f"  • Bands: {', '.join(self.bands)}")
+        if not lines:
+            return ""
+        header = "DESIGN GOALS (from the source document):\n"
+        return header + "\n".join(lines) + "\n"
+
+
+def _extract_design_goals(text: str) -> DocumentGoals:
+    """Extract design goals (gain, F/B, SWR, bands) from document text."""
+    goals = DocumentGoals()
+
+    # --- Gain (dBi or dBd → dBi) ---
+    gains: list[float] = []
+    for m in re.finditer(r"(\d+(?:\.\d+)?)\s*dBi", text):
+        gains.append(float(m.group(1)))
+    for m in re.finditer(r"(\d+(?:\.\d+)?)\s*dBd", text):
+        gains.append(float(m.group(1)) + 2.15)  # convert dBd → dBi
+    if gains:
+        # Pick the most commonly mentioned value, or the first one
+        goals.gain_dbi = round(max(set(gains), key=gains.count), 1)
+
+    # --- Front-to-back ratio ---
+    fbs: list[float] = []
+    # "12 dB front-to-back", "21 dB F/B"
+    for m in re.finditer(
+        r"(\d+(?:\.\d+)?)\s*dB\s*(?:front.to.back|F/?B|f/?b)", text
+    ):
+        fbs.append(float(m.group(1)))
+    # "front-to-back ratio of 25 dB", "F/B of 20 dB"
+    for m in re.finditer(
+        r"(?:front.to.back|F/?B|f/?b)\s*(?:ratio)?\s*(?:of|:|\s)\s*"
+        r"(\d+(?:\.\d+)?)\s*dB",
+        text,
+    ):
+        fbs.append(float(m.group(1)))
+    if fbs:
+        goals.fb_db = round(max(fbs), 1)  # take highest stated F/B as target
+
+    # --- SWR target ---
+    swrs: list[float] = []
+    # "1.5:1 SWR", "1.5:1 VSWR"
+    for m in re.finditer(
+        r"(\d+(?:\.\d+)?)\s*:\s*1\s*(?:SWR|VSWR)", text, re.IGNORECASE
+    ):
+        swrs.append(float(m.group(1)))
+    # "SWR below 1.5:1", "VSWR of 2:1"
+    for m in re.finditer(
+        r"(?:SWR|VSWR)\s*(?:of|below|under|<|less\s+than)?\s*"
+        r"(\d+(?:\.\d+)?)\s*:\s*1",
+        text,
+        re.IGNORECASE,
+    ):
+        swrs.append(float(m.group(1)))
+    if swrs:
+        # Take the tightest (lowest) SWR spec that's realistic (≥ 1.1)
+        valid = [s for s in swrs if s >= 1.1]
+        if valid:
+            goals.max_swr = round(min(valid), 1)
+
+    # --- Band references ---
+    band_pattern = re.compile(r"\b(\d{1,3})\s*[-]?\s*[Mm](?:eter|etre)?s?\b")
+    seen: set[str] = set()
+    for m in band_pattern.finditer(text):
+        label = m.group(1)
+        if label in _BAND_CENTRES and label not in seen:
+            seen.add(label)
+            goals.bands.append(f"{label}m")
+
+    return goals
 
 
 def _load_type_context(antenna_type: str) -> str:
@@ -1139,8 +1235,10 @@ def generate_nec_from_pdf(
     if not pdf_text.strip():
         raise ValueError("Could not extract any text from the PDF")
 
-    # Always detect the design frequency from the document
+    # Always detect the design frequency and goals from the document
     detected_freq = _guess_freq_mhz(pdf_text, antenna_type)
+    doc_goals = _extract_design_goals(pdf_text)
+    doc_goals.freq_mhz = detected_freq
 
     user_msg = (
         "Below is text extracted from a PDF document describing an antenna.\n"
@@ -1148,6 +1246,11 @@ def generate_nec_from_pdf(
         "models this antenna as accurately as possible.\n\n"
         f"DESIGN FREQUENCY: The document describes an antenna for "
         f"{detected_freq} MHz.  Use {detected_freq} MHz in the FR card.\n\n"
+    )
+    goals_block = doc_goals.prompt_block()
+    if goals_block:
+        user_msg += goals_block + "\n"
+    user_msg += (
         "IMPORTANT: Look for dimensional tables or text giving element lengths "
         "and spacings.  Convert all dimensions to metres.  Place elements at "
         "physically correct 3-D coordinates — do NOT stack all wires at the "
@@ -1294,8 +1397,10 @@ def generate_nec_from_url(
     if not url_text.strip():
         raise ValueError("Could not extract any text from the URL")
 
-    # Always detect the design frequency from the document
+    # Always detect the design frequency and goals from the document
     detected_freq = _guess_freq_mhz(url_text, antenna_type)
+    doc_goals = _extract_design_goals(url_text)
+    doc_goals.freq_mhz = detected_freq
 
     user_msg = (
         "Below is text extracted from a web page describing an antenna.\n"
@@ -1303,6 +1408,11 @@ def generate_nec_from_url(
         "models this antenna as accurately as possible.\n\n"
         f"DESIGN FREQUENCY: The document describes an antenna for "
         f"{detected_freq} MHz.  Use {detected_freq} MHz in the FR card.\n\n"
+    )
+    goals_block = doc_goals.prompt_block()
+    if goals_block:
+        user_msg += goals_block + "\n"
+    user_msg += (
         "IMPORTANT: Look for dimensional tables or text giving element lengths "
         "and spacings. Convert all dimensions to metres. Place elements at "
         "physically correct 3-D coordinates — do NOT stack all wires at the "
