@@ -1109,6 +1109,7 @@ function renderUserAntennaDetail(d) {
       <div class="tab active" data-tab="tab-user-3d" onclick="switchUserTab(this)">3D View</div>
       <div class="tab" data-tab="tab-user-sim" onclick="switchUserTab(this)">Simulation</div>
       <div class="tab" data-tab="tab-user-nec" onclick="switchUserTab(this)">NEC Source</div>
+      ${(d.metadata?.steps?.length) ? '<div class="tab" data-tab="tab-user-pipeline" onclick="switchUserTab(this)">Pipeline</div>' : ''}
     </div>
 
     <div class="tab-content active" id="tab-user-3d">
@@ -1166,6 +1167,39 @@ function renderUserAntennaDetail(d) {
     <div class="tab-content" id="tab-user-nec">
       <div class="nec-viewer">${esc(d.nec_content || 'No content')}</div>
     </div>
+
+    ${(d.metadata?.steps?.length) ? `
+    <div class="tab-content" id="tab-user-pipeline">
+      <div style="padding:12px 0;">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+          Pipeline completed in ${d.metadata.iterations || '?'} iteration(s) using <strong>${esc(d.metadata.model || '?')}</strong>
+          ${d.metadata.usage ? ` &middot; ${(d.metadata.usage.prompt_tokens||0)+(d.metadata.usage.completion_tokens||0)} tokens` : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          ${d.metadata.steps.map(s => {
+            const icon = s.status === 'ok' ? '&#x2705;' : s.status === 'skip' ? '&#x23ED;' : '&#x274C;';
+            const isTune = s.name === 'tune';
+            const bg = isTune ? (s.status === 'ok' ? 'rgba(63,185,80,0.12)' : 'rgba(248,81,73,0.12)') : 'var(--surface)';
+            const border = isTune ? (s.status === 'ok' ? '1px solid rgba(63,185,80,0.3)' : '1px solid rgba(248,81,73,0.3)') : '1px solid var(--border)';
+            return \`<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:\${bg};border:\${border};border-radius:6px;font-size:13px;">
+              <span>\${icon}</span>
+              <span style="font-weight:600;min-width:90px;color:var(--text);">Step \${s.step}\${isTune ? 'b' : ''}: \${esc(s.name)}</span>
+              <span style="color:var(--muted);flex:1;">\${esc(s.detail || '')}</span>
+            </div>\`;
+          }).join('')}
+        </div>
+        ${d.metadata.goal_verdict ? \`
+        <div style="margin-top:16px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;">
+          <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:var(--text);">
+            Goal Verdict: \${d.metadata.goal_verdict.passed ? '<span style="color:var(--green);">PASSED</span>' : '<span style="color:var(--red);">FAILED</span>'}
+          </div>
+          ${d.metadata.goal_verdict.checks ? \`<div style="font-size:12px;color:var(--muted);">
+            \${d.metadata.goal_verdict.checks.map(c => \`<div>\${c.passed ? '&#x2705;' : '&#x274C;'} \${esc(c.name || c.metric || '')}: \${esc(c.detail || c.value?.toString() || '')}</div>\`).join('')}
+          </div>\` : ''}
+        </div>\` : ''}
+      </div>
+    </div>
+    ` : ''}
   `;
   loadUser3D(d.id);
 }

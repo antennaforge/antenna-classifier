@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import urllib.error
 import urllib.request
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_URL = "http://localhost:8787"
+DEFAULT_URL = os.environ.get("NEC_SOLVER_URL", "http://localhost:8787")
 
 
 @dataclass
