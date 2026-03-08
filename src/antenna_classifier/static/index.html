@@ -158,6 +158,21 @@ a { color: var(--accent); text-decoration: none; }
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* OODA 4-square indicator */
+.ooda-grid { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 4px; vertical-align: middle; margin-right: 8px; }
+.ooda-cell {
+  width: 22px; height: 22px; border-radius: 3px; background: var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 8px; font-weight: 700; color: var(--muted); text-transform: uppercase;
+  transition: background 0.2s;
+}
+.ooda-cell.active { background: var(--red); color: #fff; animation: ooda-blink 0.8s ease-in-out infinite; }
+.ooda-cell.done { background: var(--green); color: #fff; animation: none; }
+@keyframes ooda-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 /* My Antennas panel */
 .my-antennas-panel { border-bottom: 1px solid var(--border); }
 .my-antennas-header {
@@ -1386,6 +1401,25 @@ async function _afterCreate(row) {
   selectUserAntenna(row.id);
 }
 
+// OODA 4-square indicator HTML
+const _OODA_LABELS = ['O','O','D','A'];  // Observe, Orient, Decide, Act
+function _oodaHtml() {
+  return '<div class="ooda-grid">' +
+    _OODA_LABELS.map((l,i) => `<div class="ooda-cell" id="ooda-${i}">${l}</div>`).join('') +
+    '</div><span class="ooda-detail" id="ooda-detail"></span>';
+}
+function _oodaSet(phase, status, detail) {
+  for (let i = 0; i < 4; i++) {
+    const c = document.getElementById('ooda-' + i);
+    if (!c) continue;
+    c.classList.remove('active', 'done');
+    if (i < phase) c.classList.add('done');
+    else if (i === phase) c.classList.add(status === 'ok' || status === 'skip' ? 'done' : 'active');
+  }
+  const d = document.getElementById('ooda-detail');
+  if (d) d.textContent = detail || '';
+}
+
 async function submitCreate() {
   const mode = document.getElementById('create-modal').dataset.mode;
   if (mode === 'desc') return submitDescription();
@@ -1399,24 +1433,48 @@ async function submitDescription() {
   const name = document.getElementById('desc-name').value.trim();
   if (!name) { status.innerHTML = '<span style="color:var(--red);">Name is required</span>'; return; }
   btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Designing antenna… this may take 15-30 seconds';
+  status.innerHTML = _oodaHtml();
+  const body = {
+    name,
+    antenna_type: document.getElementById('desc-type').value,
+    frequency_mhz: parseFloat(document.getElementById('desc-freq').value) || 14.0,
+    ground_type: document.getElementById('desc-ground').value,
+    description: document.getElementById('desc-details').value,
+  };
   try {
-    const body = {
-      name,
-      antenna_type: document.getElementById('desc-type').value,
-      frequency_mhz: parseFloat(document.getElementById('desc-freq').value) || 14.0,
-      ground_type: document.getElementById('desc-ground').value,
-      description: document.getElementById('desc-details').value,
-    };
-    const resp = await fetch(`${BASE_URL}/api/my-antennas/generate`, {
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/generate-stream`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
-    const row = await resp.json();
-    status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
-    document.getElementById('desc-name').value = '';
-    document.getElementById('desc-details').value = '';
-    await _afterCreate(row);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const msg = JSON.parse(line.slice(6));
+        if (msg.event === 'step') {
+          _oodaSet(msg.phase, msg.status, msg.name + ': ' + (msg.detail || ''));
+        } else if (msg.event === 'done') {
+          status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+          document.getElementById('desc-name').value = '';
+          document.getElementById('desc-details').value = '';
+          await _afterCreate(msg.antenna);
+          return;
+        } else if (msg.event === 'error') {
+          throw new Error(msg.detail);
+        }
+      }
+    }
+    // Stream ended without done event — fall back
+    if (!status.querySelector('.done-check')) {
+      status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+    }
   } catch (e) {
     status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
   } finally { btn.disabled = false; }

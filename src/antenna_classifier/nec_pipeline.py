@@ -1400,6 +1400,7 @@ def run_pipeline(
     model: str = _ENGINEERING_MODEL,
     classify_model: str = _COMPREHENSION_MODEL,
     max_retries: int = _MAX_PIPELINE_RETRIES,
+    on_step: Any | None = None,
 ) -> PipelineResult:
     """Run the full 7-step NEC generation pipeline.
 
@@ -1421,11 +1422,22 @@ def run_pipeline(
         Model for steps 1-2 (text comprehension).
     max_retries : int
         Maximum loop-back iterations.
+    on_step : callable, optional
+        Callback ``on_step(step_log)`` invoked each time a pipeline step
+        completes.  Used for live SSE telemetry.
 
     Returns
     -------
     PipelineResult
     """
+    def _emit(s: StepLog) -> None:
+        result.steps.append(s)
+        if on_step is not None:
+            try:
+                on_step(s)
+            except Exception:
+                pass
+
     result = PipelineResult(
         source_text=source_text[:4000],
         model=model,
@@ -1436,7 +1448,7 @@ def run_pipeline(
     # Step 1: Classify document
     # ===================================================================
     if antenna_type:
-        result.steps.append(StepLog(
+        _emit(StepLog(
             step=1, name="classify", status="skip",
             detail=f"Type provided: {antenna_type}",
         ))
@@ -1447,7 +1459,7 @@ def run_pipeline(
                 source_text, client=client, model=classify_model,
             )
             antenna_type = atype
-            result.steps.append(StepLog(
+            _emit(StepLog(
                 step=1, name="classify", status="ok",
                 detail=f"{atype} (confidence {conf:.2f})",
                 data={"antenna_type": atype, "confidence": conf,
@@ -1455,7 +1467,7 @@ def run_pipeline(
             ))
             log.info("Step 1: classified as %s (%.2f)", atype, conf)
         except Exception as exc:
-            result.steps.append(StepLog(
+            _emit(StepLog(
                 step=1, name="classify", status="fail",
                 detail=str(exc),
             ))
@@ -1477,7 +1489,7 @@ def run_pipeline(
         if description:
             concepts.description = description
         result.concepts = concepts
-        result.steps.append(StepLog(
+        _emit(StepLog(
             step=2, name="extract", status="ok",
             detail=f"freq={concepts.freq_mhz}MHz, "
                    f"{len(concepts.elements)} structural params",
@@ -1486,7 +1498,7 @@ def run_pipeline(
         log.info("Step 2: extracted %d params, freq=%.3f MHz",
                  len(concepts.elements), concepts.freq_mhz)
     except Exception as exc:
-        result.steps.append(StepLog(
+        _emit(StepLog(
             step=2, name="extract", status="fail", detail=str(exc),
         ))
         # Fall back to minimal concepts
@@ -1526,7 +1538,7 @@ def run_pipeline(
             )
             last_llm_response = ""
             result.json_deck = deck
-            result.steps.append(StepLog(
+            _emit(StepLog(
                 step=3, name="generate", status="ok",
                 detail=f"stamped moxon — {len(deck.get('cards', []))} cards",
             ))
@@ -1543,13 +1555,13 @@ def run_pipeline(
                 # Capture LLM response for conversation continuity
                 last_llm_response = gen_resp.choices[0].message.content or ""
                 result.json_deck = deck
-                result.steps.append(StepLog(
+                _emit(StepLog(
                     step=3, name="generate", status="ok",
                     detail=f"{len(deck.get('cards', []))} cards",
                 ))
                 log.info("Step 3: generated %d cards", len(deck.get("cards", [])))
             except (ValueError, _json.JSONDecodeError) as exc:
-                result.steps.append(StepLog(
+                _emit(StepLog(
                     step=3, name="generate", status="fail", detail=str(exc),
                 ))
                 feedback = f"JSON generation failed: {exc}\nPlease fix and try again."
@@ -1567,7 +1579,7 @@ def run_pipeline(
             )]
             advisory = [i for i in issues if i not in critical]
 
-            result.steps.append(StepLog(
+            _emit(StepLog(
                 step=4, name="validate", status="fail" if critical else "ok",
                 detail=f"{len(critical)} critical, {len(advisory)} advisory",
                 data={"issues": issues},
@@ -1588,7 +1600,7 @@ def run_pipeline(
                 feedback = ""  # history supersedes flat feedback
                 continue
         else:
-            result.steps.append(StepLog(
+            _emit(StepLog(
                 step=4, name="validate", status="ok", detail="All checks passed",
             ))
             log.info("Step 4: validation passed")
@@ -1597,7 +1609,7 @@ def run_pipeline(
         log.info("Pipeline step 5 (iter %d): converting to NEC", iteration + 1)
         nec = convert_to_nec(deck)
         result.nec_content = nec
-        result.steps.append(StepLog(
+        _emit(StepLog(
             step=5, name="convert", status="ok",
             detail=f"{len(nec)} chars",
         ))
@@ -1624,7 +1636,7 @@ def run_pipeline(
             goal_ok = eval_result["goal_verdict"].get("passed", False)
 
         if sim_ok and goal_ok:
-            result.steps.append(StepLog(
+            _emit(StepLog(
                 step=6, name="simulate", status="ok",
                 detail="Simulation passed, goals met",
                 data={
@@ -1635,7 +1647,7 @@ def run_pipeline(
             log.info("Step 6: PASSED — pipeline complete")
             break
         else:
-            result.steps.append(StepLog(
+            _emit(StepLog(
                 step=6, name="simulate", status="fail",
                 detail=f"sim_ok={sim_ok}, goal_ok={goal_ok}",
                 data={
@@ -1658,7 +1670,7 @@ def run_pipeline(
                 tuned_deck, tune_report = _tune_deck(
                     deck, concepts.antenna_type, concepts.freq_mhz,
                 )
-                result.steps.append(StepLog(
+                _emit(StepLog(
                     step=6, name="tune",
                     status="ok" if tune_report.success else "fail",
                     detail=tune_report.detail,
@@ -1685,7 +1697,7 @@ def run_pipeline(
                     if eval_result.get("goal_verdict"):
                         goal_ok = eval_result["goal_verdict"].get("passed", False)
                     if goal_ok:
-                        result.steps.append(StepLog(
+                        _emit(StepLog(
                             step=6, name="simulate", status="ok",
                             detail="Deterministic tuning succeeded",
                         ))
@@ -1701,7 +1713,7 @@ def run_pipeline(
 
             # --- Step 7: Diagnose and route ---
             retry_step, fb = diagnose_failure(eval_result, issues, concepts)
-            result.steps.append(StepLog(
+            _emit(StepLog(
                 step=7, name="feedback",
                 status="ok" if retry_step > 0 else "fail",
                 detail=f"Routing to step {retry_step}" if retry_step else "No retry",

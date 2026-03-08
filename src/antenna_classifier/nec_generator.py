@@ -1142,6 +1142,7 @@ def generate_nec_from_form(
     model: str = "gpt-5.2",
     json_mode: bool = False,
     pipeline: bool = False,
+    on_step: Any | None = None,
 ) -> dict[str, Any]:
     """Generate a NEC file from structured form data.
 
@@ -1161,6 +1162,7 @@ def generate_nec_from_form(
             ground_type=ground_type,
             description=description,
             model=model,
+            on_step=on_step,
         )
         result = pr.to_dict()
         result["json_mode"] = True

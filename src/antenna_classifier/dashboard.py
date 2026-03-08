@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import sys
 import tempfile
 import threading
@@ -436,6 +437,135 @@ def create_app(
             if hasattr(row.get(k), "isoformat"):
                 row[k] = row[k].isoformat()
         return JSONResponse(row, status_code=201)
+
+    # ---- SSE streaming generate endpoint ----
+
+    # Map pipeline step names → OODA phase index (0-3)
+    _STEP_PHASE = {
+        "classify": 0, "extract": 0,       # Observe
+        "generate": 1, "validate": 1,      # Orient
+        "convert": 2, "simulate": 2,       # Decide
+        "tune": 3, "feedback": 3,          # Act
+    }
+
+    @app.post("/api/my-antennas/generate-stream")
+    async def generate_my_antenna_stream(request: "Request"):
+        """SSE stream: emit OODA step events during NEC generation."""
+        from starlette.responses import StreamingResponse
+
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        if not hf_user["ai_enabled"]:
+            raise HTTPException(403, "AI features not enabled")
+        body = await request.json()
+        name = body.get("name", "").strip()
+        antenna_type = body.get("antenna_type", "dipole")
+        frequency_mhz = float(body.get("frequency_mhz", 14.0))
+        ground_type = body.get("ground_type", "free_space")
+        description = body.get("description", "")
+        if not name:
+            raise HTTPException(400, "Name is required")
+
+        q: queue.Queue[dict | None] = queue.Queue()
+
+        def _on_step(step_log: Any) -> None:
+            phase = _STEP_PHASE.get(step_log.name, -1)
+            q.put({
+                "step": step_log.step,
+                "name": step_log.name,
+                "status": step_log.status,
+                "detail": step_log.detail,
+                "phase": phase,
+            })
+
+        def _run() -> None:
+            try:
+                result = generate_nec_from_form(
+                    antenna_type=antenna_type,
+                    frequency_mhz=frequency_mhz,
+                    ground_type=ground_type,
+                    description=description,
+                    pipeline=True,
+                    on_step=_on_step,
+                )
+                q.put({"_result": result})
+            except Exception as exc:
+                q.put({"_error": str(exc)})
+            finally:
+                q.put(None)  # sentinel
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
+        async def _event_stream():
+            import asyncio
+            while True:
+                try:
+                    msg = q.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if msg is None:
+                    break
+                if "_result" in msg:
+                    # Pipeline complete — save antenna and emit done
+                    try:
+                        result = msg["_result"]
+                        nec_content = result["nec_content"]
+                        try:
+                            tmp = tempfile.NamedTemporaryFile(
+                                suffix=".nec", dir=str(_user_nec_dir),
+                                delete=False, mode="w",
+                            )
+                            tmp.write(nec_content)
+                            tmp.close()
+                            parsed = parser.parse_file(Path(tmp.name))
+                            cls = classifier.classify(parsed)
+                            band = cls.band
+                        except Exception:
+                            band = None
+                        row = create_antenna(
+                            name=name,
+                            description=description,
+                            antenna_type=result.get("classified_type", antenna_type),
+                            frequency_mhz=frequency_mhz,
+                            band=band,
+                            ground_type=ground_type,
+                            nec_content=nec_content,
+                            source="form",
+                            metadata={
+                                "model": result.get("model"),
+                                "usage": result.get("usage"),
+                                "iterations": result.get("iterations"),
+                                "classified_type": result.get("classified_type"),
+                                "confidence": result.get("confidence"),
+                                "refinement_log": result.get("refinement_log"),
+                                "steps": result.get("steps"),
+                                "goal_verdict": result.get("goal_verdict"),
+                                "buildability": result.get("buildability"),
+                            },
+                            owner_user_id=hf_user["user_id"],
+                        )
+                        for k in ("created_at", "updated_at"):
+                            if hasattr(row.get(k), "isoformat"):
+                                row[k] = row[k].isoformat()
+                        yield f"data: {json.dumps({'event': 'done', 'antenna': row})}\n\n"
+                    except Exception as exc:
+                        yield f"data: {json.dumps({'event': 'error', 'detail': str(exc)})}\n\n"
+                elif "_error" in msg:
+                    yield f"data: {json.dumps({'event': 'error', 'detail': msg['_error']})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'event': 'step', **msg})}\n\n"
+                await asyncio.sleep(0)
+
+        return StreamingResponse(
+            _event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.delete("/api/my-antennas/{antenna_id}")
     async def delete_my_antenna(antenna_id: int, request: "Request"):

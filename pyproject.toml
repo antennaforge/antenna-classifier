@@ -34,3 +34,6 @@ antenna_classifier = ["static/**"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "solver: requires nec2c Docker solver at localhost:8787",
+]

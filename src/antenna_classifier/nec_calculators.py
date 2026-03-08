@@ -1322,6 +1322,7 @@ _CALC_MAP: dict[str, Any] = {
     "hexbeam": calc_hexbeam,
     "magnetic_loop": calc_magnetic_loop,
     "phased_array": calc_phased_array,
+    "lpda": calc_lpda,
     "loop": calc_loop,
     "half_square": calc_half_square,
     "bobtail_curtain": calc_bobtail_curtain,
