@@ -1645,6 +1645,60 @@ def run_pipeline(
                 },
             ))
 
+            # --- Step 6b: Deterministic element-length tuning ---
+            # If the simulation ran but goals failed (SWR/impedance),
+            # try tuning element lengths programmatically before
+            # falling back to the LLM.
+            from .nec_tuner import is_tunable, tune_deck as _tune_deck
+            if (sim_ok and not goal_ok
+                    and is_tunable(concepts.antenna_type)
+                    and deck):
+                log.info("Step 6b: attempting deterministic tuning for %s",
+                         concepts.antenna_type)
+                tuned_deck, tune_report = _tune_deck(
+                    deck, concepts.antenna_type, concepts.freq_mhz,
+                )
+                result.steps.append(StepLog(
+                    step=6, name="tune",
+                    status="ok" if tune_report.success else "fail",
+                    detail=tune_report.detail,
+                    data={
+                        "evals_used": tune_report.evals_used,
+                        "initial_swr": tune_report.initial_swr,
+                        "final_swr": tune_report.final_swr,
+                        "adjustments": tune_report.adjustments,
+                    },
+                ))
+                if tune_report.success:
+                    # Re-convert and re-evaluate with tuned deck
+                    deck = tuned_deck
+                    result.json_deck = deck
+                    nec = convert_to_nec(deck)
+                    result.nec_content = nec
+                    # Re-evaluate to confirm goals pass
+                    eval_result = simulate_and_evaluate(
+                        nec, concepts.antenna_type, concepts.freq_mhz,
+                    )
+                    result.goal_verdict = eval_result.get("goal_verdict")
+                    result.buildability = eval_result.get("buildability")
+                    goal_ok = True
+                    if eval_result.get("goal_verdict"):
+                        goal_ok = eval_result["goal_verdict"].get("passed", False)
+                    if goal_ok:
+                        result.steps.append(StepLog(
+                            step=6, name="simulate", status="ok",
+                            detail="Deterministic tuning succeeded",
+                        ))
+                        log.info("Step 6b: tuning PASSED — pipeline complete "
+                                 "(%d evals, SWR %.2f → %.2f)",
+                                 tune_report.evals_used,
+                                 tune_report.initial_swr,
+                                 tune_report.final_swr)
+                        break
+                    else:
+                        log.info("Step 6b: tuning improved but goals still not met, "
+                                 "falling through to LLM feedback")
+
             # --- Step 7: Diagnose and route ---
             retry_step, fb = diagnose_failure(eval_result, issues, concepts)
             result.steps.append(StepLog(
