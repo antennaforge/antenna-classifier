@@ -543,8 +543,24 @@ def calc_quad(
         notes=[
             f"Driven loop: {driven_circ:.3f}m circumference, "
             f"{driven_side:.3f}m per side",
+            f"Reflector loop: {reflector_circ:.3f}m circumference, "
+            f"{reflector_side:.3f}m per side (+5%)",
+            f"Element spacing (boom): {element_spacing:.3f}m ({element_spacing / wl:.3f}λ)",
             "Impedance ≈ 120Ω — use λ/4 75Ω coax transformer for 50Ω match",
             "Bottom-fed = horizontal polarisation, side-fed = vertical",
+        ],
+        nec_hints=[
+            "Each quad element is 4 GW cards forming a closed square loop",
+            "Loops in Y-Z plane, spaced along X (boom axis)",
+            f"Driven element: 4 wires, each side {driven_side:.4f}m, "
+            f"square from Y=-{driven_side / 2:.4f} to Y=+{driven_side / 2:.4f}, "
+            f"Z=0 to Z={driven_side:.4f}",
+            f"Reflector: 4 wires, each side {reflector_side:.4f}m, "
+            f"at X=-{element_spacing:.4f}",
+            "Use UNIQUE tag numbers per wire (e.g. reflector 1-4, driven 5-8)",
+            "Feed at bottom centre of driven element — split bottom wire "
+            "into two halves with excitation at the junction",
+            "Wire endpoints MUST connect exactly to close each loop",
         ],
     )
 
@@ -874,6 +890,14 @@ def calc_hexbeam(
             f"Reflector wire: {reflector_wire:.3f}m per side",
             "Tune highest band first, work downward",
             "Wire-to-wire clearance at tips is critical",
+        ],
+        nec_hints=[
+            "6 GW cards per band: 3 driven wire sections + 3 reflector sections",
+            "Driven wire is a W-shape in X-Y plane; reflector below it by vertical_spacing",
+            "Each element forms an inverted-V between adjacent spreader tips",
+            f"Driven: 6 wire sections around hexagonal frame (radius {frame_radius:.4f}m)",
+            f"Reflector: same pattern, offset Z=-{vertical_spacing:.4f}m",
+            "Feed at centre of driven element",
         ],
     )
 

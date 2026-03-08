@@ -191,6 +191,36 @@ def _get_client():
 
 _NEC_CONTEXT_DIR = pathlib.Path(__file__).parent / "nec_context"
 
+# Band-centre frequencies (MHz) keyed by ham-band name fragments
+_BAND_CENTRES: dict[str, float] = {
+    "160": 1.85, "80": 3.6, "60": 5.35, "40": 7.1, "30": 10.125,
+    "20": 14.175, "17": 18.118, "15": 21.2, "12": 24.94,
+    "10": 28.4, "6": 50.15, "2": 146.0,
+}
+
+
+def _guess_freq_mhz(text: str, antenna_type: str = "") -> float:
+    """Try to extract a design frequency from free text.
+
+    Looks for explicit MHz values, then ham-band references.
+    Falls back to 14.175 (20 m) if nothing found.
+    """
+    # Explicit MHz value (e.g. "14.175 MHz", "28.5MHz", "146 mhz")
+    m = re.search(r"(\d{1,4}(?:\.\d+)?)\s*[Mm][Hh][Zz]", text)
+    if m:
+        val = float(m.group(1))
+        if 0.5 < val < 1500:
+            return val
+
+    # Ham-band reference (e.g. "20m band", "10-meter", "15 m")
+    m = re.search(r"\b(\d{1,3})\s*[-]?\s*[Mm](?:eter|etre)?s?\b", text)
+    if m:
+        band = m.group(1)
+        if band in _BAND_CENTRES:
+            return _BAND_CENTRES[band]
+
+    return 14.175  # 20 m default
+
 
 def _load_type_context(antenna_type: str) -> str:
     """Load the NEC modelling reference for *antenna_type*, if available.
@@ -1105,6 +1135,27 @@ def generate_nec_from_pdf(
         user_msg += f"\nAdditional instructions: {extra_instructions.strip()}\n"
 
     if antenna_type:
+        # Inject computed starting dimensions from the calculator
+        from .nec_calculators import calc_for_type
+
+        calc = calc_for_type(antenna_type, _guess_freq_mhz(pdf_text, antenna_type))
+        if calc is not None:
+            user_msg += (
+                f"\n--- COMPUTED STARTING DIMENSIONS ---\n"
+                f"{calc.summary()}\n"
+            )
+            for note in calc.notes:
+                user_msg += f"  \u2022 {note}\n"
+            if calc.nec_hints:
+                user_msg += "NEC modelling hints:\n"
+                for hint in calc.nec_hints:
+                    user_msg += f"  \u2022 {hint}\n"
+            user_msg += (
+                "Use these dimensions as your starting point. "
+                "They are physics-based and should be close to optimal.\n"
+                "--- END DIMENSIONS ---\n"
+            )
+
         type_ctx = _load_type_context(antenna_type)
         if type_ctx:
             user_msg += (
@@ -1237,11 +1288,21 @@ def generate_nec_from_url(
     if antenna_type:
         from .nec_calculators import calc_for_type
 
-        calc = calc_for_type(antenna_type, 14.0)  # default freq, will be overridden by page data
+        calc = calc_for_type(antenna_type, _guess_freq_mhz(url_text, antenna_type))
         if calc is not None:
             user_msg += (
-                f"\n--- COMPUTED REFERENCE DIMENSIONS for {antenna_type} ---\n"
+                f"\n--- COMPUTED STARTING DIMENSIONS ---\n"
                 f"{calc.summary()}\n"
+            )
+            for note in calc.notes:
+                user_msg += f"  \u2022 {note}\n"
+            if calc.nec_hints:
+                user_msg += "NEC modelling hints:\n"
+                for hint in calc.nec_hints:
+                    user_msg += f"  \u2022 {hint}\n"
+            user_msg += (
+                "Use these dimensions as your starting point. "
+                "They are physics-based and should be close to optimal.\n"
                 "--- END DIMENSIONS ---\n"
             )
 

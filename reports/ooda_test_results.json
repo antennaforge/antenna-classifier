@@ -1,10 +1,26 @@
 [
   {
-    "test": "20m-elevated-vertical-g8ode-iss-1-31.pdf",
+    "test": "20m Moxon Rectangle",
     "status": "ok",
-    "type": "vertical",
+    "type": "moxon",
     "confidence": 0.8,
     "iterations": 3,
-    "elapsed": 107.0
+    "elapsed": 20.1
+  },
+  {
+    "test": "3-element 10m Yagi",
+    "status": "ok",
+    "type": "yagi",
+    "confidence": 0.8,
+    "iterations": 1,
+    "elapsed": 5.1
+  },
+  {
+    "test": "15m Hexbeam",
+    "status": "ok",
+    "type": "hexbeam",
+    "confidence": 0.8,
+    "iterations": 3,
+    "elapsed": 21.9
   }
 ]
