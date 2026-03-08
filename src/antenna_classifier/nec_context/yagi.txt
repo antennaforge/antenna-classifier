@@ -44,5 +44,33 @@ elements connected by a transmission line (phase line). Key rules:
 - Z0 of the TL card comes from the design (commonly 200–600 Ω).
 - Set TL length=0 so NEC uses the physical spacing as electrical length.
 - The director (and any further directors) follow as normal.
-Example TL card: TL 1,11,2,11,250.,0.,0.,0.,0.,0.
-  (connects centre seg 11 of wire 1 to centre seg 11 of wire 2, Z0=250 Ω)
+
+Example — Cebik phased-driver Yagi for 10 m (28.5 MHz):
+Design: rear driver + forward driver (25 in apart) + director (39 in ahead
+of forward driver, 64 in from rear). 250 Ω open-wire phase line.
+Dimensions from L.B. Cebik (W4RNL):
+  Rear driver  205 in (5.207 m tip-to-tip)
+  Fwd driver   193 in (4.902 m)
+  Director     190 in (4.826 m)
+  Spacing rear→fwd  25 in (0.635 m)
+  Spacing rear→dir  64 in (1.626 m)
+  Element OD 0.75 in (19.05 mm), radius 0.009525 m
+CM Cebik 10m phased-driver Yagi
+CE
+GW 1,21,0.,-2.6035,0.,0.,2.6035,0.,.009525
+GW 2,21,.635,-2.4511,0.,.635,2.4511,0.,.009525
+GW 3,21,1.626,-2.413,0.,1.626,2.413,0.,.009525
+GE 0
+TL 1,11,2,11,250.,0.,0.,0.,0.,0.
+LD 5,1,0,0,2.5E+07,1.
+LD 5,2,0,0,2.5E+07,1.
+LD 5,3,0,0,2.5E+07,1.
+EX 0,2,11,0,1.,0.
+FR 0,1,0,0,28.5,0
+GN -1
+RP 0,1,361,1000,90.,0.,0.,1.,0.
+EN
+Note: Wire 1 = rear driver at X=0, Wire 2 = forward driver at X=0.635 m,
+Wire 3 = director at X=1.626 m. TL card at centre segments (seg 11 of 21).
+Feed on forward driver (GW 2). For other bands (e.g. 15 m, 17 m, 20 m),
+scale all element lengths and spacings proportionally by frequency ratio.
