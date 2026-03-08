@@ -676,30 +676,36 @@ def create_app(
             raise HTTPException(403, "AI features not enabled for your account. Contact admin.")
 
         # Good types for surprise — types that reliably produce working NEC
+        # HF-only pool (10 m – 160 m)
         _SURPRISE_POOL = [
             ("dipole", 14.175, "20 m Dipole"),
             ("dipole", 7.1, "40 m Dipole"),
+            ("dipole", 3.6, "80 m Dipole"),
+            ("dipole", 1.85, "160 m Dipole"),
+            ("dipole", 28.4, "10 m Dipole"),
             ("inverted_v", 14.175, "20 m Inverted V"),
             ("inverted_v", 7.1, "40 m Inverted V"),
+            ("inverted_v", 3.6, "80 m Inverted V"),
             ("vertical", 14.175, "20 m Vertical"),
             ("vertical", 28.4, "10 m Vertical"),
+            ("vertical", 7.1, "40 m Vertical"),
             ("yagi", 28.4, "10 m 3-Element Yagi"),
             ("yagi", 21.2, "15 m 3-Element Yagi"),
-            ("yagi", 50.15, "6 m 3-Element Yagi"),
+            ("yagi", 14.175, "20 m 3-Element Yagi"),
             ("moxon", 28.4, "10 m Moxon Rectangle"),
             ("moxon", 21.2, "15 m Moxon Rectangle"),
+            ("moxon", 14.175, "20 m Moxon Rectangle"),
             ("quad", 21.2, "15 m Cubical Quad"),
             ("quad", 14.175, "20 m Cubical Quad"),
-            ("j_pole", 146.0, "2 m J-Pole"),
             ("end_fed", 7.1, "40 m End-Fed Half-Wave"),
+            ("end_fed", 14.175, "20 m End-Fed Half-Wave"),
             ("delta_loop", 14.175, "20 m Delta Loop"),
             ("delta_loop", 28.4, "10 m Delta Loop"),
             ("magnetic_loop", 14.175, "20 m Magnetic Loop"),
+            ("magnetic_loop", 21.2, "15 m Magnetic Loop"),
             ("half_square", 14.175, "20 m Half Square"),
             ("bobtail_curtain", 14.175, "20 m Bobtail Curtain"),
-            ("helix", 435.0, "70 cm Helix"),
-            ("collinear", 146.0, "2 m Collinear"),
-            ("discone", 146.0, "VHF Discone"),
+            ("bobtail_curtain", 7.1, "40 m Bobtail Curtain"),
         ]
         pick = _random.choice(_SURPRISE_POOL)
         antenna_type, freq, nice_name = pick
