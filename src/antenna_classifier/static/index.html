@@ -436,7 +436,7 @@ function renderSummary() {
     </div>
     <div class="section">
       <h3>Type Distribution</h3>
-      <div id="summary-type-chart" style="width:100%;height:300px;"></div>
+      <div id="summary-type-chart" style="width:100%;height:380px;min-height:380px;"></div>
     </div>
     <div class="section">
       <h3>Band Distribution</h3>
@@ -448,10 +448,11 @@ function renderSummary() {
   Plotly.newPlot('summary-type-chart', [{
     labels: Object.keys(types), values: Object.values(types),
     type: 'pie', hole: 0.4,
+    automargin: true,
     textinfo: 'label+value',
     marker: { line: { color: '#161b22', width: 2 } }
   }], { paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
-    font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 10, l: 10, r: 10 },
+    font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 32, l: 10, r: 96 },
     showlegend: false
   }, { responsive: true });
   // Band bar chart
