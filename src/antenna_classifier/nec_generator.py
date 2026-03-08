@@ -34,7 +34,25 @@ You are an expert antenna engineer who generates NEC2 input files.
 11. Use realistic dimensions in metres for the requested frequency.
 12. Wire radius should be realistic (e.g. 0.001 m for #14 AWG).
 13. Segment count: ~10-20 segments per half-wavelength.
-14. Coordinates: Z axis is vertical (height above ground).
+14. Coordinate system: Z axis is UP (height above ground).  X and Y are the
+    horizontal plane.  Every GW card MUST have physically correct 3-D
+    coordinates:
+    - Horizontal elements: extend along X or Y at a fixed Z height.
+      Example dipole at 10 m height along Y:
+        GW 1 21  0.0  -2.5  10.0   0.0  2.5  10.0  0.001
+    - Vertical elements: extend along Z.
+      Example vertical from ground to 5 m:
+        GW 1 11  0.0  0.0  0.0   0.0  0.0  5.0  0.001
+    - Multi-element antennas: elements MUST be at different positions.
+      Space them apart along the appropriate axis.  Do NOT place all
+      wires at the origin.
+      Example 3-element beam along X at 10 m height:
+        GW 1 21  0.000  -2.6  10.0   0.000  2.6  10.0  0.001
+        GW 2 21  0.700  -2.5  10.0   0.700  2.5  10.0  0.001
+        GW 3 21  1.600  -2.4  10.0   1.600  2.4  10.0  0.001
+15. When element lengths and spacings are given in inches or feet, convert
+    them to metres (1 inch = 0.0254 m, 1 foot = 0.3048 m).  If a "total
+    length" is given, the half-length extends ±Y (or ±X) from the boom.
 
 **NEC2 card format reference:**
 - CM <text>
@@ -203,9 +221,13 @@ def generate_nec_from_pdf(
         raise ValueError("Could not extract any text from the PDF")
 
     user_msg = (
-        "Below is text extracted from a PDF document describing an antenna. "
+        "Below is text extracted from a PDF document describing an antenna.\n"
         "Based on the description, generate a complete NEC2 input file that "
         "models this antenna as accurately as possible.\n\n"
+        "IMPORTANT: Look for dimensional tables or text giving element lengths "
+        "and spacings.  Convert all dimensions to metres.  Place elements at "
+        "physically correct 3-D coordinates — do NOT stack all wires at the "
+        "origin.\n\n"
         f"--- PDF TEXT ---\n{pdf_text}\n--- END ---\n"
     )
     if extra_instructions.strip():
@@ -289,4 +311,21 @@ def _validate_nec(nec: str) -> None:
                 f"Generated NEC deck is degenerate — all {len(gw_lines)} wires "
                 f"are identical. The AI model fell into a repetition loop. "
                 f"Try again or provide more specific dimensions in the description."
+            )
+
+    # Detect collapsed geometry: multiple wires that all share the same start
+    # point and differ only in length along one axis (classic "stacked vertical"
+    # failure mode).
+    if len(gw_lines) >= 2:
+        starts: set[str] = set()
+        for gw in gw_lines:
+            parts = gw.split()
+            if len(parts) >= 9:
+                start = (parts[3], parts[4], parts[5])
+                starts.add(start)
+        if len(starts) == 1:
+            raise ValueError(
+                "Generated NEC deck has collapsed geometry — all wires share "
+                "the same start point. Multi-element antennas need elements "
+                "at different spatial positions. Try again."
             )
