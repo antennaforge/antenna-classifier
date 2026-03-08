@@ -939,6 +939,9 @@ def _classify_yagi(ctx: _AnalysisContext, result: ClassificationResult) -> None:
     """Yagi: multiple parallel elements along a boom axis (axis-agnostic)."""
     if result.confidence >= 0.7:
         return
+    # A Moxon is a Yagi with bent elements — don't reclassify it
+    if result.antenna_type == "moxon":
+        return
     if ctx.n_wire_groups < 2:
         return
 
