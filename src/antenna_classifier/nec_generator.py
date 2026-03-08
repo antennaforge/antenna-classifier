@@ -574,6 +574,79 @@ def extract_pdf_text(pdf_bytes: bytes, max_chars: int = 20000) -> str:
     return full[:max_chars]
 
 
+def _ocr_pdf_pages(
+    pdf_bytes: bytes,
+    *,
+    max_pages: int = 6,
+    max_chars: int = 20000,
+) -> str:
+    """OCR a scanned PDF by sending page images to GPT-4o-mini vision.
+
+    Falls back gracefully: returns empty string if the API call fails
+    or no readable text is found.
+    """
+    import base64
+    import pdfplumber
+
+    log = logging.getLogger(__name__)
+    log.info("PDF has no extractable text — attempting vision OCR")
+
+    # Render pages to JPEG and collect as base64 data URIs
+    image_parts: list[dict] = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for i, page in enumerate(pdf.pages[:max_pages]):
+            try:
+                pimg = page.to_image(resolution=200)
+                buf = io.BytesIO()
+                pimg.original.save(buf, format="JPEG", quality=85)
+                b64 = base64.b64encode(buf.getvalue()).decode()
+                image_parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{b64}",
+                        "detail": "high",
+                    },
+                })
+            except Exception:
+                log.warning("Could not render page %d to image", i)
+
+    if not image_parts:
+        return ""
+
+    client = _get_client()
+    content: list[dict] = [
+        {
+            "type": "text",
+            "text": (
+                "These are pages from a technical document about an antenna "
+                "design.  I need to extract the antenna dimensions and "
+                "specifications to create a computer simulation model "
+                "(NEC2 format).\n\n"
+                "Please extract: antenna type, frequency/band, element "
+                "dimensions (lengths, spacings, wire sizes), height above "
+                "ground, and any construction details with measurements.  "
+                "Reproduce any dimensional tables as pipe-delimited rows.  "
+                "Focus on numerical data, coordinates, and specifications."
+            ),
+        },
+        *image_parts,
+    ]
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": content}],
+            max_tokens=4096,
+        )
+        text = resp.choices[0].message.content or ""
+        log.info("Vision OCR returned %d chars from %d page(s)",
+                 len(text), len(image_parts))
+        return text[:max_chars]
+    except Exception as exc:
+        log.warning("Vision OCR failed: %s", exc)
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # NEC generation from form data
 # ---------------------------------------------------------------------------
@@ -663,6 +736,9 @@ def generate_nec_from_pdf(
     Returns ``{"nec_content": str, "pdf_text": str, "model": str, "usage": dict}``.
     """
     pdf_text = extract_pdf_text(pdf_bytes)
+    if not pdf_text.strip():
+        # Scanned / image-only PDF — try vision OCR
+        pdf_text = _ocr_pdf_pages(pdf_bytes)
     if not pdf_text.strip():
         raise ValueError("Could not extract any text from the PDF")
 
