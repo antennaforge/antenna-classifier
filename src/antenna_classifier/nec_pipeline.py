@@ -86,6 +86,8 @@ class ExtractedConcepts:
     type_evidence: str = ""
 
     freq_mhz: float = 0.0
+    freq_mhz_low: float = 0.0   # broadband low edge (LPDA, discone, etc.)
+    freq_mhz_high: float = 0.0  # broadband high edge
     bands: list[str] = field(default_factory=list)
 
     # Design goals
@@ -114,6 +116,8 @@ class ExtractedConcepts:
             "type_confidence": self.type_confidence,
             "type_evidence": self.type_evidence,
             "freq_mhz": self.freq_mhz,
+            "freq_mhz_low": self.freq_mhz_low,
+            "freq_mhz_high": self.freq_mhz_high,
             "bands": self.bands,
             "gain_dbi": self.gain_dbi,
             "fb_db": self.fb_db,
@@ -261,6 +265,8 @@ _EXTRACTION_SPECS: dict[str, dict[str, Any]] = {
     "lpda": {
         "desc": "Log-periodic dipole array",
         "params": [
+            ("freq_mhz_low", "Low-end design frequency of the LPDA coverage range", "MHz"),
+            ("freq_mhz_high", "High-end design frequency of the LPDA coverage range", "MHz"),
             ("n_elements", "Number of dipole elements", "count"),
             ("longest_length", "Longest element full length", "m"),
             ("shortest_length", "Shortest element full length", "m"),
@@ -586,7 +592,7 @@ def extract_concepts(
 
     Returns an ExtractedConcepts instance.
     """
-    from .nec_generator import _guess_freq_mhz, _extract_design_goals
+    from .nec_generator import _guess_freq_mhz, _guess_freq_range, _extract_design_goals
 
     concepts = ExtractedConcepts(antenna_type=antenna_type)
 
@@ -595,6 +601,11 @@ def extract_concepts(
         concepts.freq_mhz = freq_mhz
     else:
         concepts.freq_mhz = _guess_freq_mhz(text, antenna_type)
+
+    # Frequency range for broadband types (LPDA, discone, etc.)
+    freq_range = _guess_freq_range(text, antenna_type)
+    if freq_range is not None:
+        concepts.freq_mhz_low, concepts.freq_mhz_high = freq_range
 
     doc_goals = _extract_design_goals(text)
     concepts.gain_dbi = doc_goals.gain_dbi
@@ -642,6 +653,16 @@ def extract_concepts(
             continue
         if key == "freq_mhz" and concepts.freq_mhz == 0:
             concepts.freq_mhz = float(val)
+        elif key == "freq_mhz_low" and concepts.freq_mhz_low == 0:
+            try:
+                concepts.freq_mhz_low = float(val)
+            except (TypeError, ValueError):
+                pass
+        elif key == "freq_mhz_high" and concepts.freq_mhz_high == 0:
+            try:
+                concepts.freq_mhz_high = float(val)
+            except (TypeError, ValueError):
+                pass
         elif key == "gain_dbi" and concepts.gain_dbi is None:
             concepts.gain_dbi = float(val)
         elif key == "fb_db" and concepts.fb_db is None:
@@ -724,6 +745,11 @@ def _format_concepts_for_generation(
         f"ANTENNA TYPE: {concepts.antenna_type}",
         f"DESIGN FREQUENCY: {concepts.freq_mhz} MHz",
     ]
+
+    if concepts.freq_mhz_low > 0 and concepts.freq_mhz_high > 0:
+        lines.append(
+            f"FREQUENCY RANGE: {concepts.freq_mhz_low}\u2013{concepts.freq_mhz_high} MHz"
+        )
 
     # Ground
     ground = concepts.ground_type or "free_space"
@@ -812,6 +838,16 @@ def _format_concepts_for_generation(
     return "\n".join(lines)
 
 
+def _calc_kwargs(concepts: ExtractedConcepts) -> dict[str, Any]:
+    """Build extra kwargs for calc_for_type from extracted concepts."""
+    kw: dict[str, Any] = {}
+    if concepts.freq_mhz_low > 0:
+        kw["freq_mhz_low"] = concepts.freq_mhz_low
+    if concepts.freq_mhz_high > 0:
+        kw["freq_mhz_high"] = concepts.freq_mhz_high
+    return kw
+
+
 def generate_deck(
     concepts: ExtractedConcepts,
     *,
@@ -839,7 +875,9 @@ def generate_deck(
     # Get calculator reference dimensions
     calc_summary = ""
     if concepts.freq_mhz > 0:
-        calc = calc_for_type(concepts.antenna_type, concepts.freq_mhz)
+        calc = calc_for_type(
+            concepts.antenna_type, concepts.freq_mhz, **_calc_kwargs(concepts)
+        )
         if calc is not None:
             calc_summary = calc.summary()
             for note in calc.notes:
@@ -1197,7 +1235,9 @@ def validate_deck(
 
     # --- Calculator cross-check ---
     if concepts.freq_mhz > 0:
-        calc = calc_for_type(concepts.antenna_type, concepts.freq_mhz)
+        calc = calc_for_type(
+            concepts.antenna_type, concepts.freq_mhz, **_calc_kwargs(concepts)
+        )
         if calc is not None:
             # Extract element lengths from GW cards and compare
             element_lengths = []

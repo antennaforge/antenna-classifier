@@ -1008,3 +1008,103 @@ class TestLPDACalcForType:
         assert result.dimensions["n_elements"] >= 3
         assert result.dimensions["boom_length"] > 0
         assert len(result.dimensions["element_lengths"]) == result.dimensions["n_elements"]
+
+
+# ===================================================================
+# Frequency range extraction tests
+# ===================================================================
+
+class TestFreqRangeExtraction:
+    """_guess_freq_range extracts broadband frequency ranges from text."""
+
+    def test_explicit_mhz_range(self):
+        from antenna_classifier.nec_generator import _guess_freq_range
+        result = _guess_freq_range("An LPDA covering 54 to 148 MHz")
+        assert result == (54.0, 148.0)
+
+    def test_unicode_dash_range(self):
+        from antenna_classifier.nec_generator import _guess_freq_range
+        result = _guess_freq_range("Operating range: 28\u2013148 MHz")
+        assert result == (28.0, 148.0)
+
+    def test_hyphen_dash_range(self):
+        from antenna_classifier.nec_generator import _guess_freq_range
+        result = _guess_freq_range("VHF band 50-148 MHz coverage")
+        assert result == (50.0, 148.0)
+
+    def test_multi_band_labels(self):
+        from antenna_classifier.nec_generator import _guess_freq_range
+        result = _guess_freq_range("This covers the 20m and 10m amateur bands")
+        assert result is not None
+        assert result[0] == 14.0  # 20m low edge
+        assert result[1] == 29.7  # 10m high edge
+
+    def test_three_bands(self):
+        from antenna_classifier.nec_generator import _guess_freq_range
+        result = _guess_freq_range("Works on 40m, 20m, and 10 meters")
+        assert result is not None
+        assert result[0] == 7.0   # 40m low edge
+        assert result[1] == 29.7  # 10m high edge
+
+    def test_single_freq_returns_none(self):
+        from antenna_classifier.nec_generator import _guess_freq_range
+        result = _guess_freq_range("A 14.175 MHz dipole")
+        assert result is None
+
+    def test_single_band_returns_none(self):
+        from antenna_classifier.nec_generator import _guess_freq_range
+        result = _guess_freq_range("A 20m Yagi antenna")
+        assert result is None
+
+    def test_invalid_range_rejected(self):
+        from antenna_classifier.nec_generator import _guess_freq_range
+        # hi < lo should be rejected
+        result = _guess_freq_range("Range 148 to 54 MHz")
+        assert result is None
+
+
+class TestExtractedConceptsFreqRange:
+    """ExtractedConcepts carries freq_mhz_low/high through the pipeline."""
+
+    def test_concepts_has_freq_range_fields(self):
+        c = ExtractedConcepts(
+            antenna_type="lpda", freq_mhz=101.0,
+            freq_mhz_low=54.0, freq_mhz_high=148.0,
+        )
+        assert c.freq_mhz_low == 54.0
+        assert c.freq_mhz_high == 148.0
+
+    def test_to_dict_includes_freq_range(self):
+        c = ExtractedConcepts(
+            antenna_type="lpda", freq_mhz=101.0,
+            freq_mhz_low=54.0, freq_mhz_high=148.0,
+        )
+        d = c.to_dict()
+        assert d["freq_mhz_low"] == 54.0
+        assert d["freq_mhz_high"] == 148.0
+
+    def test_calc_kwargs_passes_range(self):
+        from antenna_classifier.nec_pipeline import _calc_kwargs
+        c = ExtractedConcepts(
+            antenna_type="lpda", freq_mhz=101.0,
+            freq_mhz_low=54.0, freq_mhz_high=148.0,
+        )
+        kw = _calc_kwargs(c)
+        assert kw == {"freq_mhz_low": 54.0, "freq_mhz_high": 148.0}
+
+    def test_calc_kwargs_empty_without_range(self):
+        from antenna_classifier.nec_pipeline import _calc_kwargs
+        c = ExtractedConcepts(antenna_type="dipole", freq_mhz=14.175)
+        assert _calc_kwargs(c) == {}
+
+    def test_lpda_calc_uses_document_range(self):
+        """End-to-end: extracted range reaches calc_lpda via calc_for_type."""
+        from antenna_classifier.nec_calculators import calc_for_type
+        from antenna_classifier.nec_pipeline import _calc_kwargs
+
+        c = ExtractedConcepts(
+            antenna_type="lpda", freq_mhz=101.0,
+            freq_mhz_low=54.0, freq_mhz_high=148.0,
+        )
+        result = calc_for_type(c.antenna_type, c.freq_mhz, **_calc_kwargs(c))
+        assert result.dimensions["freq_range_mhz"] == [54.0, 148.0]

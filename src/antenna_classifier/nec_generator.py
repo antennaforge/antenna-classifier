@@ -199,6 +199,47 @@ _BAND_CENTRES: dict[str, float] = {
     "10": 28.4, "6": 50.15, "2": 146.0,
 }
 
+# Band edges (low, high) in MHz — ITU Region 2 (Americas) ham allocations
+_BAND_EDGES: dict[str, tuple[float, float]] = {
+    "160": (1.8, 2.0), "80": (3.5, 4.0), "60": (5.33, 5.4),
+    "40": (7.0, 7.3), "30": (10.1, 10.15), "20": (14.0, 14.35),
+    "17": (18.068, 18.168), "15": (21.0, 21.45), "12": (24.89, 24.99),
+    "10": (28.0, 29.7), "6": (50.0, 54.0), "2": (144.0, 148.0),
+}
+
+
+def _guess_freq_range(text: str, antenna_type: str = "") -> tuple[float, float] | None:
+    """Extract a frequency range (low, high) in MHz from free text.
+
+    Returns ``None`` when no range can be determined.  For broadband
+    antennas (LPDA, discone, etc.) this looks for:
+      1. Explicit "54 to 148 MHz" / "54–148 MHz" patterns
+      2. Multiple ham-band references → edge-to-edge span
+    """
+    # 1. Explicit MHz range ("54 to 148 MHz", "54-148 MHz", "54 – 148 MHz")
+    m = re.search(
+        r"(\d{1,4}(?:\.\d+)?)\s*(?:to|[-\u2013\u2014])\s*(\d{1,4}(?:\.\d+)?)\s*[Mm][Hh][Zz]",
+        text,
+    )
+    if m:
+        lo, hi = float(m.group(1)), float(m.group(2))
+        if 0.5 < lo < 1500 and 0.5 < hi < 1500 and lo < hi:
+            return (lo, hi)
+
+    # 2. Multiple band references → derive range from band edges
+    band_pattern = re.compile(r"\b(\d{1,3})\s*[-]?\s*[Mm](?:eter|etre)?s?\b")
+    found_bands: list[str] = []
+    for bm in band_pattern.finditer(text):
+        label = bm.group(1)
+        if label in _BAND_EDGES and label not in found_bands:
+            found_bands.append(label)
+    if len(found_bands) >= 2:
+        all_lo = min(_BAND_EDGES[b][0] for b in found_bands)
+        all_hi = max(_BAND_EDGES[b][1] for b in found_bands)
+        return (all_lo, all_hi)
+
+    return None
+
 
 def _guess_freq_mhz(text: str, antenna_type: str = "") -> float:
     """Try to extract a design frequency from free text.
@@ -1272,6 +1313,7 @@ def generate_nec_from_pdf(
 
     # Always detect the design frequency and goals from the document
     detected_freq = _guess_freq_mhz(pdf_text, antenna_type)
+    detected_range = _guess_freq_range(pdf_text, antenna_type)
     doc_goals = _extract_design_goals(pdf_text)
     doc_goals.freq_mhz = detected_freq
 
@@ -1280,8 +1322,13 @@ def generate_nec_from_pdf(
         "Based on the description, generate a complete NEC2 input file that "
         "models this antenna as accurately as possible.\n\n"
         f"DESIGN FREQUENCY: The document describes an antenna for "
-        f"{detected_freq} MHz.  Use {detected_freq} MHz in the FR card.\n\n"
+        f"{detected_freq} MHz.  Use {detected_freq} MHz in the FR card.\n"
     )
+    if detected_range:
+        user_msg += (
+            f"FREQUENCY RANGE: {detected_range[0]}–{detected_range[1]} MHz.\n"
+        )
+    user_msg += "\n"
     goals_block = doc_goals.prompt_block()
     if goals_block:
         user_msg += goals_block + "\n"
@@ -1299,7 +1346,11 @@ def generate_nec_from_pdf(
         # Inject computed starting dimensions from the calculator
         from .nec_calculators import calc_for_type
 
-        calc = calc_for_type(antenna_type, detected_freq)
+        calc_kw: dict[str, Any] = {}
+        if detected_range:
+            calc_kw["freq_mhz_low"] = detected_range[0]
+            calc_kw["freq_mhz_high"] = detected_range[1]
+        calc = calc_for_type(antenna_type, detected_freq, **calc_kw)
         if calc is not None:
             user_msg += (
                 f"\n--- COMPUTED STARTING DIMENSIONS ---\n"
@@ -1451,6 +1502,7 @@ def generate_nec_from_url(
 
     # Always detect the design frequency and goals from the document
     detected_freq = _guess_freq_mhz(url_text, antenna_type)
+    detected_range = _guess_freq_range(url_text, antenna_type)
     doc_goals = _extract_design_goals(url_text)
     doc_goals.freq_mhz = detected_freq
 
@@ -1459,8 +1511,13 @@ def generate_nec_from_url(
         "Based on the description, generate a complete NEC2 input file that "
         "models this antenna as accurately as possible.\n\n"
         f"DESIGN FREQUENCY: The document describes an antenna for "
-        f"{detected_freq} MHz.  Use {detected_freq} MHz in the FR card.\n\n"
+        f"{detected_freq} MHz.  Use {detected_freq} MHz in the FR card.\n"
     )
+    if detected_range:
+        user_msg += (
+            f"FREQUENCY RANGE: {detected_range[0]}\u2013{detected_range[1]} MHz.\n"
+        )
+    user_msg += "\n"
     goals_block = doc_goals.prompt_block()
     if goals_block:
         user_msg += goals_block + "\n"
@@ -1478,7 +1535,11 @@ def generate_nec_from_url(
     if antenna_type:
         from .nec_calculators import calc_for_type
 
-        calc = calc_for_type(antenna_type, detected_freq)
+        calc_kw: dict[str, Any] = {}
+        if detected_range:
+            calc_kw["freq_mhz_low"] = detected_range[0]
+            calc_kw["freq_mhz_high"] = detected_range[1]
+        calc = calc_for_type(antenna_type, detected_freq, **calc_kw)
         if calc is not None:
             user_msg += (
                 f"\n--- COMPUTED STARTING DIMENSIONS ---\n"
