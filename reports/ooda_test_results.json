@@ -1,10 +1,10 @@
 [
   {
-    "test": "Ceecom_10-11m_Moxon_user.pdf",
+    "test": "3 BAND QUAD LOOP.pdf",
     "status": "ok",
-    "type": "moxon",
+    "type": "loop",
     "confidence": 0.8,
     "iterations": 3,
-    "elapsed": 29.7
+    "elapsed": 40.8
   }
 ]

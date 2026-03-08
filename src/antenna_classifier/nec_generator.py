@@ -88,6 +88,71 @@ Output a complete, runnable NEC2 deck now.
 """
 
 
+# ---------------------------------------------------------------------------
+# JSON-intermediate system prompt
+# ---------------------------------------------------------------------------
+
+_JSON_SYSTEM_PROMPT = """\
+You are an expert antenna engineer who generates NEC2 input files in a
+structured JSON format.  The JSON is then mechanically translated to NEC2
+cards, so your output MUST be a valid JSON object — nothing else.
+
+**Output format:**
+Return a JSON object with a single key "cards" containing an array of card
+objects.  Each card object has:
+  - "type": two-letter NEC card code (e.g. "GW", "FR", "EX")
+  - "params": array of numbers (integers or floats) for the card fields
+  - "text": string (only for CM, CE, SY cards — the comment or variable text)
+
+**Card parameter order (same as NEC2):**
+- CM: {"type":"CM", "text":"<comment>"}
+- CE: {"type":"CE"}
+- GW: {"type":"GW", "params":[tag, segments, x1, y1, z1, x2, y2, z2, radius]}
+- GE: {"type":"GE", "params":[ground_type]}
+- TL: {"type":"TL", "params":[tag1, seg1, tag2, seg2, Z0, length, VR1, VI1, VR2, VI2]}
+- EX: {"type":"EX", "params":[ex_type, tag, segment, 0, v_real, v_imag]}
+- FR: {"type":"FR", "params":[fr_type, n_freq, 0, 0, start_mhz, step_mhz]}
+- GN: {"type":"GN", "params":[gn_type, ...]}
+- LD: {"type":"LD", "params":[ld_type, tag, seg_start, seg_end, R, L_or_X, C_or_B]}
+- RP: {"type":"RP", "params":[rp_type, ntheta, nphi, mode, theta_start, phi_start, theta_step, phi_step]}
+- EN: {"type":"EN"}
+
+**Geometry rules:**
+1. Coordinate system: Z is UP.  X and Y are horizontal.
+2. Horizontal elements extend along X or Y at a fixed Z height.
+3. Vertical elements extend along Z.
+4. Multi-element antennas: elements at DIFFERENT positions.  Do NOT place
+   all wires at the origin.
+5. Use realistic dimensions in metres.
+6. Wire radius: realistic (e.g. 0.001 for #14 AWG, 8.14e-4 for #12 AWG).
+7. Segments: ~10-20 per half-wavelength.
+8. When element lengths are given in inches or feet, convert to metres
+   (1 inch = 0.0254 m, 1 foot = 0.3048 m).
+9. If the source describes transmission lines or phasing stubs, model
+   them with TL cards (placed after GE, before EX).
+10. Always start with CM comments, then CE, then geometry (GW), then GE,
+    then control cards (TL, EX, LD, FR, GN, RP), then EN.
+
+**Example — 20m dipole at 10 m height:**
+```json
+{
+  "cards": [
+    {"type":"CM", "text":"20m dipole at 10m height"},
+    {"type":"CE"},
+    {"type":"GW", "params":[1, 21, 0.0, -5.05, 10.0, 0.0, 5.05, 10.0, 0.001]},
+    {"type":"GE", "params":[0]},
+    {"type":"EX", "params":[0, 1, 11, 0, 1.0, 0.0]},
+    {"type":"FR", "params":[0, 1, 0, 0, 14.175, 0]},
+    {"type":"RP", "params":[0, 91, 1, 1000, 0.0, 0.0, 1.0, 0.0]},
+    {"type":"EN"}
+  ]
+}
+```
+
+Output ONLY the JSON object.  No markdown fences, no commentary.
+"""
+
+
 def _read_secret(name: str, env_fallback: str = "") -> str:
     """Read a Docker secret file, falling back to an env var."""
     secret_path = f"/run/secrets/{name}"
@@ -358,6 +423,89 @@ def _analyze_nec(nec: str, target_type: str | None) -> dict[str, Any]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# JSON → NEC conversion (from antenna-agent-model/fidelity_checker.py)
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+
+def _json_to_nec(parsed_json: dict[str, Any]) -> str:
+    """Convert a parsed-NEC JSON structure to a NEC2 deck string.
+
+    Expects ``{"cards": [{"type": "GW", "params": [...], "text": "..."}, ...]}``
+    — the same schema used by the antenna-agent-model translator pipeline.
+    """
+    lines: list[str] = []
+    for card in parsed_json.get("cards", []):
+        typ = card.get("type", "")
+        params = card.get("params", [])
+
+        if typ in ("CM", "CE"):
+            text = card.get("text", "")
+            line = f"{typ} {text}" if text else typ
+        elif typ == "SY":
+            text = card.get("text", "")
+            line = f"{typ} {text}" if text else typ
+        else:
+            param_strs: list[str] = []
+            for p in params:
+                if isinstance(p, float):
+                    if abs(p) < 0.01 and p != 0:
+                        param_strs.append(f"{p:.7g}")
+                    else:
+                        param_strs.append(str(p))
+                else:
+                    param_strs.append(str(p))
+            line = f"{typ} {','.join(param_strs)}" if param_strs else typ
+
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def _extract_json_deck(raw: str) -> dict[str, Any]:
+    """Extract a JSON antenna deck from the LLM response.
+
+    Handles markdown fences (```json ... ```) and strips trailing chat.
+    Returns the parsed dict.  Raises ``ValueError`` on failure.
+    """
+    # Try to find a JSON block in markdown fences
+    m = re.search(r"```(?:json)?\s*\n(.*?)```", raw, re.DOTALL)
+    text = m.group(1).strip() if m else raw.strip()
+
+    # Find the outermost { ... } in case there's trailing chat
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("LLM response does not contain a JSON object")
+    depth = 0
+    end = -1
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end == -1:
+        raise ValueError("LLM response has unbalanced JSON braces")
+
+    try:
+        deck = _json.loads(text[start:end])
+    except _json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON from LLM: {exc}") from exc
+
+    if "cards" not in deck or not isinstance(deck["cards"], list):
+        raise ValueError("JSON response missing 'cards' array")
+
+    # Basic sanity: every card needs a "type"
+    for i, card in enumerate(deck["cards"]):
+        if "type" not in card:
+            raise ValueError(f"Card {i} missing 'type' field")
+
+    return deck
+
+
 def _generate_and_refine(
     messages: list[dict[str, str]],
     target_type: str | None,
@@ -530,6 +678,196 @@ def _generate_and_refine(
 
 
 # ---------------------------------------------------------------------------
+# JSON-intermediate generation and refinement
+# ---------------------------------------------------------------------------
+
+def _generate_and_refine_json(
+    messages: list[dict[str, str]],
+    target_type: str | None,
+    model: str = "gpt-5.2",
+    max_iterations: int = _MAX_REFINE,
+    freq_mhz: float = 0.0,
+) -> dict[str, Any]:
+    """Generate a NEC file via JSON intermediate representation.
+
+    Same 5-layer OODA loop as ``_generate_and_refine``, but the LLM
+    produces a structured JSON deck which is mechanically translated to
+    NEC text.  This gives cleaner NEC output because:
+      - The LLM focuses on geometry values, not card formatting
+      - ``json_to_nec()`` produces correctly-formatted NEC every time
+      - No SY resolution needed (LLM outputs resolved numeric values)
+    """
+    from .nec_policies import policy_for_type
+
+    client = _get_client()
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    refinement_log: list[dict[str, Any]] = []
+    nec = ""
+    json_deck: dict[str, Any] = {}
+    analysis: dict[str, Any] = {}
+    eval_result: dict[str, Any] = {}
+    finish_reason = ""
+
+    msgs = [dict(m) for m in messages]
+    policy = policy_for_type(target_type or "generic")
+
+    for iteration in range(max_iterations):
+        resp = client.chat.completions.create(
+            model=model,
+            messages=msgs,
+            temperature=0.3,
+            max_completion_tokens=8192,
+        )
+        content = resp.choices[0].message.content or ""
+        finish_reason = resp.choices[0].finish_reason or ""
+        if resp.usage:
+            total_usage["prompt_tokens"] += resp.usage.prompt_tokens
+            total_usage["completion_tokens"] += resp.usage.completion_tokens
+
+        # --- Layer 0: JSON extraction + NEC conversion ---
+        try:
+            json_deck = _extract_json_deck(content)
+            nec = _json_to_nec(json_deck)
+        except ValueError as exc:
+            log.info("Refinement iter %d: JSON parse error — %s", iteration + 1, exc)
+            refinement_log.append({
+                "iteration": iteration + 1,
+                "layer": "json_parse",
+                "issue": str(exc),
+                "passed": False,
+            })
+            if iteration < max_iterations - 1:
+                msgs.append({"role": "assistant", "content": content})
+                msgs.append({"role": "user", "content": (
+                    f"Your output could not be parsed as valid JSON:\n  {exc}\n"
+                    "Please output a corrected JSON object with the same schema. "
+                    "Output ONLY the JSON — no markdown, no commentary."
+                )})
+            continue
+
+        # --- Layer 1: Structural validation ---
+        try:
+            _validate_nec(nec)
+        except ValueError as exc:
+            log.info("Refinement iter %d: structural error — %s", iteration + 1, exc)
+            refinement_log.append({
+                "iteration": iteration + 1,
+                "layer": "structural",
+                "issue": str(exc),
+                "passed": False,
+            })
+            if iteration < max_iterations - 1:
+                msgs.append({"role": "assistant", "content": content})
+                msgs.append({"role": "user", "content": (
+                    f"The NEC deck generated from your JSON has a structural error:\n"
+                    f"  {exc}\n"
+                    "Please fix the JSON cards and output the corrected JSON object."
+                )})
+            continue
+
+        # --- Layer 2: Reverse-classification analysis ---
+        analysis = _analyze_nec(nec, target_type)
+        log.info(
+            "Refinement iter %d (JSON): classified=%s conf=%.2f valid=%s type_match=%s",
+            iteration + 1, analysis["classified_type"],
+            analysis["confidence"], analysis["valid"], analysis["type_match"],
+        )
+
+        classification_passed = analysis["valid"] and analysis["type_match"]
+
+        if not classification_passed:
+            refinement_log.append({
+                "iteration": iteration + 1,
+                "layer": "classification",
+                "classified_type": analysis["classified_type"],
+                "confidence": analysis["confidence"],
+                "evidence": analysis["evidence"],
+                "fingerprint": analysis["fingerprint"],
+                "passed": False,
+            })
+            if analysis["feedback"] and iteration < max_iterations - 1:
+                feedback_text = (
+                    "I analysed the NEC output generated from your JSON with "
+                    "our antenna classifier and found these issues:\n\n"
+                    + "\n".join(f"• {f}" for f in analysis["feedback"])
+                    + "\n\nPlease output a corrected JSON deck that addresses "
+                    "all issues above. Output ONLY the JSON object."
+                )
+                msgs.append({"role": "assistant", "content": content})
+                msgs.append({"role": "user", "content": feedback_text})
+            continue
+
+        # --- Layers 3+4: Simulation + Goals + Buildability ---
+        detected_type = target_type or analysis["classified_type"]
+        eval_result = _evaluate_full(nec, detected_type, freq_mhz)
+
+        log.info(
+            "Refinement iter %d (JSON): sim_ok=%s goal_passed=%s buildability=%.0f",
+            iteration + 1,
+            eval_result.get("sim_ok"),
+            eval_result.get("passed"),
+            (eval_result.get("buildability") or {}).get("score", 0),
+        )
+
+        iter_log: dict[str, Any] = {
+            "iteration": iteration + 1,
+            "layer": "full_evaluation",
+            "classified_type": analysis["classified_type"],
+            "confidence": analysis["confidence"],
+            "evidence": analysis["evidence"],
+            "fingerprint": analysis["fingerprint"],
+            "sim_ok": eval_result.get("sim_ok"),
+            "goal_verdict": eval_result.get("goal_verdict"),
+            "buildability_score": (eval_result.get("buildability") or {}).get("score"),
+            "passed": eval_result.get("passed", False),
+        }
+        refinement_log.append(iter_log)
+
+        if eval_result.get("passed", False):
+            break
+
+        # --- Layer 5: Policy-driven structured feedback ---
+        if eval_result.get("feedback") and iteration < max_iterations - 1:
+            all_feedback = list(analysis.get("feedback", []))
+            all_feedback.extend(eval_result.get("feedback", []))
+
+            score_summary: dict[str, Any] = {}
+            gv = eval_result.get("goal_verdict")
+            if gv:
+                score_summary["goal_score"] = f"{gv.get('score', 0):.2f}"
+                score_summary["goal_checks"] = (
+                    f"{gv.get('checks_passed', 0)}/{gv.get('checks_total', 0)}"
+                )
+            bld = eval_result.get("buildability")
+            if bld:
+                score_summary["buildability"] = f"{bld.get('score', 0):.0f}/100"
+
+            improvement_text = policy.improvement_prompt(
+                feedback=all_feedback,
+                score_summary=score_summary,
+            )
+            # Remind LLM to stay in JSON mode
+            improvement_text += (
+                "\n\nRemember: output ONLY a JSON object with 'cards' array. "
+                "No NEC text, no markdown, no commentary."
+            )
+            msgs.append({"role": "assistant", "content": content})
+            msgs.append({"role": "user", "content": improvement_text})
+
+    return {
+        "nec_content": nec,
+        "json_deck": json_deck,
+        "usage": {**total_usage, "finish_reason": finish_reason},
+        "iterations": len(refinement_log),
+        "refinement_log": refinement_log,
+        "classified_type": analysis.get("classified_type", "unknown"),
+        "confidence": analysis.get("confidence", 0.0),
+        "goal_verdict": eval_result.get("goal_verdict"),
+        "buildability": eval_result.get("buildability"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # PDF text extraction
 # ---------------------------------------------------------------------------
 
@@ -658,8 +996,12 @@ def generate_nec_from_form(
     ground_type: str = "free_space",
     description: str = "",
     model: str = "gpt-5.2",
+    json_mode: bool = False,
 ) -> dict[str, Any]:
     """Generate a NEC file from structured form data.
+
+    When *json_mode* is True the LLM produces a JSON intermediate
+    representation which is mechanically converted to NEC text.
 
     Returns ``{"nec_content": str, "model": str, "usage": dict}``.
     """
@@ -707,16 +1049,19 @@ def generate_nec_from_form(
             f"{type_ctx}\n--- END REFERENCE ---\n"
         )
 
+    sys_prompt = _JSON_SYSTEM_PROMPT if json_mode else _SYSTEM_PROMPT
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": sys_prompt},
         {"role": "user", "content": user_msg},
     ]
 
-    result = _generate_and_refine(
+    refine_fn = _generate_and_refine_json if json_mode else _generate_and_refine
+    result = refine_fn(
         messages, target_type=antenna_type, model=model,
         freq_mhz=frequency_mhz,
     )
     result["model"] = model
+    result["json_mode"] = json_mode
     return result
 
 
@@ -730,8 +1075,12 @@ def generate_nec_from_pdf(
     model: str = "gpt-5.2",
     extra_instructions: str = "",
     antenna_type: str = "",
+    json_mode: bool = False,
 ) -> dict[str, Any]:
     """Extract text from a PDF and ask the model to produce a NEC file.
+
+    When *json_mode* is True the LLM produces a JSON intermediate
+    representation which is mechanically converted to NEC text.
 
     Returns ``{"nec_content": str, "pdf_text": str, "model": str, "usage": dict}``.
     """
@@ -763,18 +1112,21 @@ def generate_nec_from_pdf(
                 f"{type_ctx}\n--- END REFERENCE ---\n"
             )
 
+    sys_prompt = _JSON_SYSTEM_PROMPT if json_mode else _SYSTEM_PROMPT
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": sys_prompt},
         {"role": "user", "content": user_msg},
     ]
 
-    result = _generate_and_refine(
+    refine_fn = _generate_and_refine_json if json_mode else _generate_and_refine
+    result = refine_fn(
         messages,
         target_type=antenna_type or None,
         model=model,
     )
     result["pdf_text"] = pdf_text[:4000]
     result["model"] = model
+    result["json_mode"] = json_mode
     return result
 
 
@@ -855,8 +1207,12 @@ def generate_nec_from_url(
     model: str = "gpt-5.2",
     extra_instructions: str = "",
     antenna_type: str = "",
+    json_mode: bool = False,
 ) -> dict[str, Any]:
     """Fetch a web page, extract text, and produce a NEC file via AI.
+
+    When *json_mode* is True the LLM produces a JSON intermediate
+    representation which is mechanically converted to NEC text.
 
     Returns ``{"nec_content": str, "url_text": str, "model": str, "usage": dict}``.
     """
@@ -897,11 +1253,12 @@ def generate_nec_from_url(
             )
 
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": _JSON_SYSTEM_PROMPT if json_mode else _SYSTEM_PROMPT},
         {"role": "user", "content": user_msg},
     ]
 
-    result = _generate_and_refine(
+    refine_fn = _generate_and_refine_json if json_mode else _generate_and_refine
+    result = refine_fn(
         messages,
         target_type=antenna_type or None,
         model=model,
@@ -909,6 +1266,7 @@ def generate_nec_from_url(
     result["url"] = url
     result["url_text"] = url_text[:4000]
     result["model"] = model
+    result["json_mode"] = json_mode
     return result
 
 

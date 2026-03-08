@@ -138,13 +138,14 @@ FORM_TESTS = [
 ]
 
 
-def test_form_generation() -> list[dict]:
+def test_form_generation(json_mode: bool = False) -> list[dict]:
     """Run form-based generation tests with calculator injection."""
     from antenna_classifier.nec_generator import generate_nec_from_form
 
     results = []
     for test in FORM_TESTS:
-        _banner(f"FORM TEST: {test['name']}")
+        mode_tag = " [JSON]" if json_mode else ""
+        _banner(f"FORM TEST{mode_tag}: {test['name']}")
         t0 = time.time()
         try:
             result = generate_nec_from_form(
@@ -152,6 +153,7 @@ def test_form_generation() -> list[dict]:
                 frequency_mhz=test["frequency_mhz"],
                 ground_type=test["ground_type"],
                 description=test["description"],
+                json_mode=json_mode,
             )
             elapsed = time.time() - t0
             _print_result(result)
@@ -194,19 +196,21 @@ URL_TESTS = [
 ]
 
 
-def test_url_generation() -> list[dict]:
+def test_url_generation(json_mode: bool = False) -> list[dict]:
     """Run URL-based generation tests (fetches live pages)."""
     from antenna_classifier.nec_generator import generate_nec_from_url
 
     results = []
     for test in URL_TESTS:
-        _banner(f"URL TEST: {test['name']}")
+        mode_tag = " [JSON]" if json_mode else ""
+        _banner(f"URL TEST{mode_tag}: {test['name']}")
         print(f"  URL: {test['url']}")
         t0 = time.time()
         try:
             result = generate_nec_from_url(
                 test["url"],
                 antenna_type=test.get("antenna_type", ""),
+                json_mode=json_mode,
             )
             elapsed = time.time() - t0
 
@@ -241,11 +245,12 @@ def test_url_generation() -> list[dict]:
 # Test: PDF-based generation
 # ---------------------------------------------------------------------------
 
-def test_pdf_generation(pdf_path: str, antenna_type: str = "") -> list[dict]:
+def test_pdf_generation(pdf_path: str, antenna_type: str = "", json_mode: bool = False) -> list[dict]:
     """Run PDF-based generation on a local file."""
     from antenna_classifier.nec_generator import generate_nec_from_pdf
 
-    label = f"PDF TEST: {pdf_path}"
+    mode_tag = " [JSON]" if json_mode else ""
+    label = f"PDF TEST{mode_tag}: {pdf_path}"
     if antenna_type:
         label += f" (type hint: {antenna_type})"
     _banner(label)
@@ -259,6 +264,7 @@ def test_pdf_generation(pdf_path: str, antenna_type: str = "") -> list[dict]:
             pdf_bytes,
             extra_instructions="Build a NEC model from this antenna description.",
             antenna_type=antenna_type,
+            json_mode=json_mode,
         )
         elapsed = time.time() - t0
         _print_result(result)
@@ -341,6 +347,7 @@ def main():
     parser.add_argument("--pdf-type", type=str, default="", help="Antenna type hint for PDF test (e.g. moxon, yagi)")
     parser.add_argument("--calc", action="store_true", help="Run calculator sanity check only (no AI)")
     parser.add_argument("--all", action="store_true", help="Run form + URL tests")
+    parser.add_argument("--json", action="store_true", help="Use JSON intermediate mode (LLM outputs JSON, converted to NEC)")
     args = parser.parse_args()
 
     # Default: run calc check if nothing specified
@@ -360,13 +367,13 @@ def main():
         test_calculators()
 
     if run_form:
-        all_results.extend(test_form_generation())
+        all_results.extend(test_form_generation(json_mode=args.json))
 
     if run_url:
-        all_results.extend(test_url_generation())
+        all_results.extend(test_url_generation(json_mode=args.json))
 
     if run_pdf:
-        all_results.extend(test_pdf_generation(args.pdf, antenna_type=args.pdf_type))
+        all_results.extend(test_pdf_generation(args.pdf, antenna_type=args.pdf_type, json_mode=args.json))
 
     # Summary
     if all_results:
