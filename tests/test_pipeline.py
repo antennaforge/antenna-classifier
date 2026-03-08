@@ -972,3 +972,39 @@ class TestMoxonStamper:
         d_len = abs(gw_cards[3]["params"][6] - gw_cards[3]["params"][3])
         assert abs(c_len - d_len) > 0.1, \
             f"C={c_len:.3f} ≈ D={d_len:.3f} — tails should differ"
+
+
+# ===================================================================
+# LPDA calc_for_type regression (GH bug: missing freq args)
+# ===================================================================
+
+class TestLPDACalcForType:
+    """calc_for_type('lpda', freq) must not crash when only a single
+    design frequency is supplied — it should derive a broadband range."""
+
+    def test_lpda_single_freq_does_not_crash(self):
+        """Regression: calc_lpda() was called with no args via calc_for_type."""
+        from antenna_classifier.nec_calculators import calc_for_type
+
+        result = calc_for_type("lpda", 14.0)
+        assert result is not None
+        assert result.antenna_type == "lpda"
+        assert result.dimensions["freq_range_mhz"][0] < 14.0
+        assert result.dimensions["freq_range_mhz"][1] > 14.0
+
+    def test_lpda_explicit_range_respected(self):
+        """Explicit freq_mhz_low/high kwargs must override the default."""
+        from antenna_classifier.nec_calculators import calc_for_type
+
+        result = calc_for_type("lpda", 14.0,
+                               freq_mhz_low=10.0, freq_mhz_high=30.0)
+        assert result.dimensions["freq_range_mhz"] == [10.0, 30.0]
+
+    def test_lpda_elements_generated(self):
+        """LPDA calc must produce multiple elements and a boom."""
+        from antenna_classifier.nec_calculators import calc_for_type
+
+        result = calc_for_type("lpda", 21.0)
+        assert result.dimensions["n_elements"] >= 3
+        assert result.dimensions["boom_length"] > 0
+        assert len(result.dimensions["element_lengths"]) == result.dimensions["n_elements"]

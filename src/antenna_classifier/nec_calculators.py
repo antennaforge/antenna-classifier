@@ -1342,11 +1342,16 @@ def calc_for_type(
 
     Returns ``None`` if the antenna type has no calculator.
     """
-    fn = _CALC_MAP.get(antenna_type.lower().strip())
+    normalised = antenna_type.lower().strip()
+    fn = _CALC_MAP.get(normalised)
     if fn is None:
         return None
-    # LPDA needs different args
-    if antenna_type == "lpda":
+    # LPDA needs freq_mhz_low / freq_mhz_high instead of a single freq_mhz.
+    # Derive a reasonable range from the single design frequency when the
+    # caller doesn't supply explicit bounds (~2.5:1 bandwidth ratio).
+    if normalised == "lpda":
+        kwargs.setdefault("freq_mhz_low", freq_mhz * 0.6)
+        kwargs.setdefault("freq_mhz_high", freq_mhz * 1.5)
         return fn(**kwargs)
     return fn(freq_mhz=freq_mhz, **kwargs)
 
