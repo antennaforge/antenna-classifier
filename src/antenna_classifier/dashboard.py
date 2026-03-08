@@ -388,6 +388,7 @@ def create_app(
                 frequency_mhz=frequency_mhz,
                 ground_type=ground_type,
                 description=description,
+                pipeline=True,
             )
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
@@ -532,7 +533,8 @@ def create_app(
 
         try:
             result = generate_nec_from_pdf(pdf_bytes, extra_instructions=extra,
-                                           antenna_type=hint_type)
+                                           antenna_type=hint_type,
+                                           pipeline=True)
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
         except ValueError as exc:
@@ -609,7 +611,8 @@ def create_app(
 
         try:
             result = generate_nec_from_url(url, extra_instructions=extra,
-                                           antenna_type=hint_type)
+                                           antenna_type=hint_type,
+                                           pipeline=True)
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
         except ValueError as exc:
@@ -716,6 +719,7 @@ def create_app(
                 frequency_mhz=freq,
                 ground_type="free_space",
                 description=f"Classic {nice_name} — surprise design!",
+                pipeline=True,
             )
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
