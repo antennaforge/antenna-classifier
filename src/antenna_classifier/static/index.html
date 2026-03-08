@@ -207,6 +207,17 @@ a { color: var(--accent); text-decoration: none; }
 .modal textarea { resize: vertical; min-height: 60px; font-family: inherit; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 .modal-status { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
+/* Create-modal tabs */
+.create-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin: -4px -24px 16px; padding: 0 24px; }
+.create-tab { padding: 8px 14px; font-size: 12px; font-weight: 600; background: none; border: none;
+  color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+.create-tab:hover { color: var(--text); }
+.create-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.create-pane { display: none; }
+.create-pane.active { display: block; }
+.surprise-pane { text-align: center; padding: 32px 0; }
+.surprise-pane p { color: var(--muted); font-size: 13px; margin: 12px 0; }
+.surprise-pane .btn-ai { font-size: 15px; padding: 12px 32px; border-radius: 8px; }
 
 /* Layout uses platform-nav.js top bar instead of left site-nav */
 </style>
@@ -229,8 +240,7 @@ a { color: var(--accent); text-decoration: none; }
       </div>
       <div class="my-antennas-body" id="my-antennas-body">
         <div class="my-antenna-actions" id="my-antenna-actions" style="display:none;">
-          <button class="btn-sm btn-ai" onclick="openGenerateModal()">+ Design New</button>
-          <button class="btn-sm btn-pdf" onclick="openPdfModal()">&#128196; Import PDF</button>
+          <button class="btn-sm btn-ai" onclick="openCreateModal()">&#x2728; Create Antenna</button>
         </div>
         <div id="my-antenna-list"></div>
       </div>
@@ -1294,84 +1304,97 @@ async function deleteUserAntenna(id) {
   await loadMyAntennas();
 }
 
-// ---- Modals ----
-function openGenerateModal() {
-  if (!currentUser || !currentUser.ai_enabled) return;
-  const sel = document.getElementById('gen-type');
-  if (!sel.options.length || sel.options.length === 1) {
-    // Populate types from classifier
-    fetch(`${BASE_URL}/api/types`).then(r => r.json()).then(d => {
-      sel.innerHTML = (d.types || []).filter(t => t !== 'unknown' && t !== 'wire_object' && t !== 'error')
-        .map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
-    });
-  }
-  document.getElementById('gen-status').textContent = '';
-  document.getElementById('generate-modal').classList.add('open');
+// ---- Unified Create Modal ----
+let _typesLoaded = false;
+function _ensureTypes() {
+  if (_typesLoaded) return;
+  _typesLoaded = true;
+  fetch(`${BASE_URL}/api/types`).then(r => r.json()).then(d => {
+    const opts = (d.types || []).filter(t => t !== 'unknown' && t !== 'wire_object' && t !== 'error');
+    const descSel = document.getElementById('desc-type');
+    const pdfSel = document.getElementById('pdf-type');
+    const urlSel = document.getElementById('url-type');
+    const optsHtml = opts.map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
+    descSel.innerHTML = optsHtml;
+    pdfSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
+    urlSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
+  });
 }
 
-function openPdfModal() {
+function openCreateModal(tab) {
   if (!currentUser || !currentUser.ai_enabled) return;
-  const sel = document.getElementById('pdf-type');
-  if (!sel.options.length || sel.options.length <= 1) {
-    fetch(`${BASE_URL}/api/types`).then(r => r.json()).then(d => {
-      sel.innerHTML = '<option value="">(auto-detect)</option>' +
-        (d.types || []).filter(t => t !== 'unknown' && t !== 'wire_object' && t !== 'error')
-        .map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
-    });
-  }
-  document.getElementById('pdf-status').textContent = '';
-  document.getElementById('pdf-modal').classList.add('open');
+  _ensureTypes();
+  document.getElementById('create-status').textContent = '';
+  document.getElementById('create-modal').classList.add('open');
+  switchCreateTab(tab || 'desc');
+}
+
+function switchCreateTab(id) {
+  document.querySelectorAll('.create-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
+  document.querySelectorAll('.create-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + id));
+  // Update submit button text
+  const btn = document.getElementById('create-submit');
+  const labels = { desc: 'Design', pdf: 'Upload & Design', url: 'Fetch & Design', surprise: '' };
+  btn.style.display = id === 'surprise' ? 'none' : '';
+  btn.textContent = labels[id] || 'Design';
+  document.getElementById('create-modal').dataset.mode = id;
 }
 
 function closeModals() {
   document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('open'));
 }
 
-async function submitGenerate() {
-  const btn = document.getElementById('gen-submit');
-  const status = document.getElementById('gen-status');
-  const name = document.getElementById('gen-name').value.trim();
+async function _afterCreate(row) {
+  closeModals();
+  await loadMyAntennas();
+  document.getElementById('my-antennas-body').classList.add('open');
+  document.getElementById('my-antenna-arrow').classList.add('open');
+  selectUserAntenna(row.id);
+}
+
+async function submitCreate() {
+  const mode = document.getElementById('create-modal').dataset.mode;
+  if (mode === 'desc') return submitDescription();
+  if (mode === 'pdf') return submitPdf();
+  if (mode === 'url') return submitUrl();
+}
+
+async function submitDescription() {
+  const btn = document.getElementById('create-submit');
+  const status = document.getElementById('create-status');
+  const name = document.getElementById('desc-name').value.trim();
   if (!name) { status.innerHTML = '<span style="color:var(--red);">Name is required</span>'; return; }
   btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Designing antenna... this may take 15-30 seconds';
+  status.innerHTML = '<div class="spinner"></div> Designing antenna… this may take 15-30 seconds';
   try {
     const body = {
       name,
-      antenna_type: document.getElementById('gen-type').value,
-      frequency_mhz: parseFloat(document.getElementById('gen-freq').value) || 14.0,
-      ground_type: document.getElementById('gen-ground').value,
-      description: document.getElementById('gen-desc').value,
+      antenna_type: document.getElementById('desc-type').value,
+      frequency_mhz: parseFloat(document.getElementById('desc-freq').value) || 14.0,
+      ground_type: document.getElementById('desc-ground').value,
+      description: document.getElementById('desc-details').value,
     };
     const resp = await fetch(`${BASE_URL}/api/my-antennas/generate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(err.detail || `HTTP ${resp.status}`);
-    }
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
     const row = await resp.json();
     status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
-    closeModals();
-    // Reset form
-    document.getElementById('gen-name').value = '';
-    document.getElementById('gen-desc').value = '';
-    await loadMyAntennas();
-    // Auto-open the panel and select the new antenna
-    document.getElementById('my-antennas-body').classList.add('open');
-    document.getElementById('my-antenna-arrow').classList.add('open');
-    selectUserAntenna(row.id);
+    document.getElementById('desc-name').value = '';
+    document.getElementById('desc-details').value = '';
+    await _afterCreate(row);
   } catch (e) {
     status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
   } finally { btn.disabled = false; }
 }
 
 async function submitPdf() {
-  const btn = document.getElementById('pdf-submit');
-  const status = document.getElementById('pdf-status');
+  const btn = document.getElementById('create-submit');
+  const status = document.getElementById('create-status');
   const fileInput = document.getElementById('pdf-file');
   if (!fileInput.files.length) { status.innerHTML = '<span style="color:var(--red);">Select a PDF file</span>'; return; }
   btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Uploading & designing... this may take 30-60 seconds';
+  status.innerHTML = '<div class="spinner"></div> Uploading & designing… this may take 30-60 seconds';
   try {
     const fd = new FormData();
     fd.append('pdf', fileInput.files[0]);
@@ -1380,21 +1403,62 @@ async function submitPdf() {
     const pdfType = document.getElementById('pdf-type').value;
     if (pdfType) fd.append('antenna_type', pdfType);
     const resp = await fetch(`${BASE_URL}/api/my-antennas/upload-pdf`, { method: 'POST', body: fd });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(err.detail || `HTTP ${resp.status}`);
-    }
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
     const row = await resp.json();
     status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
-    closeModals();
     fileInput.value = '';
     document.getElementById('pdf-name').value = '';
     document.getElementById('pdf-desc').value = '';
     document.getElementById('pdf-type').selectedIndex = 0;
-    await loadMyAntennas();
-    document.getElementById('my-antennas-body').classList.add('open');
-    document.getElementById('my-antenna-arrow').classList.add('open');
-    selectUserAntenna(row.id);
+    await _afterCreate(row);
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
+  } finally { btn.disabled = false; }
+}
+
+async function submitUrl() {
+  const btn = document.getElementById('create-submit');
+  const status = document.getElementById('create-status');
+  const url = document.getElementById('url-input').value.trim();
+  if (!url) { status.innerHTML = '<span style="color:var(--red);">URL is required</span>'; return; }
+  btn.disabled = true;
+  status.innerHTML = '<div class="spinner"></div> Fetching page & designing… this may take 30-60 seconds';
+  try {
+    const body = {
+      url,
+      name: document.getElementById('url-name').value.trim() || 'URL Import',
+      description: document.getElementById('url-desc').value,
+      antenna_type: document.getElementById('url-type').value,
+    };
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/from-url`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
+    const row = await resp.json();
+    status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+    document.getElementById('url-input').value = '';
+    document.getElementById('url-name').value = '';
+    document.getElementById('url-desc').value = '';
+    document.getElementById('url-type').selectedIndex = 0;
+    await _afterCreate(row);
+  } catch (e) {
+    status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
+  } finally { btn.disabled = false; }
+}
+
+async function submitSurprise() {
+  const btn = document.getElementById('surprise-btn');
+  const status = document.getElementById('create-status');
+  btn.disabled = true;
+  status.innerHTML = '<div class="spinner"></div> Rolling the dice… this may take 15-30 seconds';
+  try {
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/surprise`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
+    const row = await resp.json();
+    status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+    await _afterCreate(row);
   } catch (e) {
     status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
   } finally { btn.disabled = false; }
@@ -1412,48 +1476,72 @@ function esc(s) {
 }
 </script>
 
-<!-- Generate Modal -->
-<div class="modal-overlay" id="generate-modal">
+<!-- Unified Create Antenna Modal -->
+<div class="modal-overlay" id="create-modal" data-mode="desc">
   <div class="modal">
-    <h2>&#x2728; Design New Antenna</h2>
-    <label>Name *</label>
-    <input id="gen-name" placeholder="e.g. My 20m 3-element Yagi">
-    <label>Antenna Type</label>
-    <select id="gen-type"></select>
-    <label>Frequency (MHz)</label>
-    <input id="gen-freq" type="number" step="0.01" value="14.0">
-    <label>Ground</label>
-    <select id="gen-ground">
-      <option value="free_space">Free Space</option>
-      <option value="perfect">Perfect Ground</option>
-      <option value="real">Real Ground (avg earth)</option>
-    </select>
-    <label>Description / Details</label>
-    <textarea id="gen-desc" placeholder="Optional: describe element spacing, height, materials, etc."></textarea>
-    <div class="modal-status" id="gen-status"></div>
-    <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeModals()">Cancel</button>
-      <button class="btn btn-ai" id="gen-submit" onclick="submitGenerate()">Design</button>
+    <h2>&#x2728; Create Antenna</h2>
+    <div class="create-tabs">
+      <button class="create-tab active" data-tab="desc" onclick="switchCreateTab('desc')">&#x270F;&#xFE0F; Describe</button>
+      <button class="create-tab" data-tab="url" onclick="switchCreateTab('url')">&#x1F310; URL</button>
+      <button class="create-tab" data-tab="pdf" onclick="switchCreateTab('pdf')">&#x1F4C4; PDF</button>
+      <button class="create-tab" data-tab="surprise" onclick="switchCreateTab('surprise')">&#x1F3B2; Surprise Me</button>
     </div>
-  </div>
-</div>
 
-<!-- PDF Upload Modal -->
-<div class="modal-overlay" id="pdf-modal">
-  <div class="modal">
-    <h2>&#128196; Import from PDF</h2>
-    <label>Name</label>
-    <input id="pdf-name" placeholder="e.g. Cebik 10m Phased Array">
-    <label>Antenna Type</label>
-    <select id="pdf-type"><option value="">(auto-detect)</option></select>
-    <label>PDF File *</label>
-    <input id="pdf-file" type="file" accept=".pdf">
-    <label>Additional Instructions</label>
-    <textarea id="pdf-desc" placeholder="Optional: any special notes about the design"></textarea>
-    <div class="modal-status" id="pdf-status"></div>
+    <!-- Describe pane -->
+    <div class="create-pane active" id="pane-desc">
+      <label>Name *</label>
+      <input id="desc-name" placeholder="e.g. My 20m 3-element Yagi">
+      <label>Antenna Type</label>
+      <select id="desc-type"></select>
+      <label>Frequency (MHz)</label>
+      <input id="desc-freq" type="number" step="0.01" value="14.0">
+      <label>Ground</label>
+      <select id="desc-ground">
+        <option value="free_space">Free Space</option>
+        <option value="perfect">Perfect Ground</option>
+        <option value="real">Real Ground (avg earth)</option>
+      </select>
+      <label>Description / Details</label>
+      <textarea id="desc-details" placeholder="Optional: describe element spacing, height, materials, etc."></textarea>
+    </div>
+
+    <!-- URL pane -->
+    <div class="create-pane" id="pane-url">
+      <label>URL *</label>
+      <input id="url-input" type="url" placeholder="https://www.karinya.net/g3txq/hexbeam/">
+      <label>Name</label>
+      <input id="url-name" placeholder="e.g. G3TXQ Hexbeam">
+      <label>Antenna Type</label>
+      <select id="url-type"><option value="">(auto-detect)</option></select>
+      <label>Additional Instructions</label>
+      <textarea id="url-desc" placeholder="Optional: any special notes about the design"></textarea>
+    </div>
+
+    <!-- PDF pane -->
+    <div class="create-pane" id="pane-pdf">
+      <label>PDF File *</label>
+      <input id="pdf-file" type="file" accept=".pdf">
+      <label>Name</label>
+      <input id="pdf-name" placeholder="e.g. Cebik 10m Phased Array">
+      <label>Antenna Type</label>
+      <select id="pdf-type"><option value="">(auto-detect)</option></select>
+      <label>Additional Instructions</label>
+      <textarea id="pdf-desc" placeholder="Optional: any special notes about the design"></textarea>
+    </div>
+
+    <!-- Surprise pane -->
+    <div class="create-pane" id="pane-surprise">
+      <div class="surprise-pane">
+        <div style="font-size: 48px;">&#x1F3B2;</div>
+        <p>We'll pick a random antenna type and band, then design it for you.<br>You never know what you'll get!</p>
+        <button class="btn btn-ai" id="surprise-btn" onclick="submitSurprise()">Roll the Dice</button>
+      </div>
+    </div>
+
+    <div class="modal-status" id="create-status"></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModals()">Cancel</button>
-      <button class="btn btn-ai" id="pdf-submit" onclick="submitPdf()">Upload &amp; Design</button>
+      <button class="btn btn-ai" id="create-submit" onclick="submitCreate()">Design</button>
     </div>
   </div>
 </div>

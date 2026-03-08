@@ -664,6 +664,97 @@ def create_app(
                 row[k] = row[k].isoformat()
         return JSONResponse(row, status_code=201)
 
+    @app.post("/api/my-antennas/surprise")
+    async def generate_surprise(request: "Request"):
+        """Pick a random antenna type + band and generate via AI."""
+        import random as _random
+
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        if not hf_user["ai_enabled"]:
+            raise HTTPException(403, "AI features not enabled for your account. Contact admin.")
+
+        # Good types for surprise — types that reliably produce working NEC
+        _SURPRISE_POOL = [
+            ("dipole", 14.175, "20 m Dipole"),
+            ("dipole", 7.1, "40 m Dipole"),
+            ("inverted_v", 14.175, "20 m Inverted V"),
+            ("inverted_v", 7.1, "40 m Inverted V"),
+            ("vertical", 14.175, "20 m Vertical"),
+            ("vertical", 28.4, "10 m Vertical"),
+            ("yagi", 28.4, "10 m 3-Element Yagi"),
+            ("yagi", 21.2, "15 m 3-Element Yagi"),
+            ("yagi", 50.15, "6 m 3-Element Yagi"),
+            ("moxon", 28.4, "10 m Moxon Rectangle"),
+            ("moxon", 21.2, "15 m Moxon Rectangle"),
+            ("quad", 21.2, "15 m Cubical Quad"),
+            ("quad", 14.175, "20 m Cubical Quad"),
+            ("j_pole", 146.0, "2 m J-Pole"),
+            ("end_fed", 7.1, "40 m End-Fed Half-Wave"),
+            ("delta_loop", 14.175, "20 m Delta Loop"),
+            ("delta_loop", 28.4, "10 m Delta Loop"),
+            ("magnetic_loop", 14.175, "20 m Magnetic Loop"),
+            ("half_square", 14.175, "20 m Half Square"),
+            ("bobtail_curtain", 14.175, "20 m Bobtail Curtain"),
+            ("helix", 435.0, "70 cm Helix"),
+            ("collinear", 146.0, "2 m Collinear"),
+            ("discone", 146.0, "VHF Discone"),
+        ]
+        pick = _random.choice(_SURPRISE_POOL)
+        antenna_type, freq, nice_name = pick
+
+        try:
+            result = generate_nec_from_form(
+                antenna_type=antenna_type,
+                frequency_mhz=freq,
+                ground_type="free_space",
+                description=f"Classic {nice_name} — surprise design!",
+            )
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc))
+        except Exception as exc:
+            raise HTTPException(500, f"AI generation failed: {exc}")
+
+        nec_content = result["nec_content"]
+        band = None
+        try:
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".nec", dir=str(_user_nec_dir), delete=False, mode="w",
+            )
+            tmp.write(nec_content)
+            tmp.close()
+            parsed = parser.parse_file(Path(tmp.name))
+            cls = classifier.classify(parsed)
+            band = cls.band
+        except Exception:
+            pass
+
+        row = create_antenna(
+            name=f"🎲 {nice_name}",
+            description=f"Surprise design! Classic {nice_name}.",
+            antenna_type=result.get("classified_type", antenna_type),
+            frequency_mhz=freq,
+            band=band,
+            ground_type="free_space",
+            nec_content=nec_content,
+            source="surprise",
+            metadata={
+                "model": result.get("model"),
+                "usage": result.get("usage"),
+                "iterations": result.get("iterations"),
+                "classified_type": result.get("classified_type"),
+                "confidence": result.get("confidence"),
+                "refinement_log": result.get("refinement_log"),
+                "surprise_pick": nice_name,
+            },
+            owner_user_id=hf_user["user_id"],
+        )
+        for k in ("created_at", "updated_at"):
+            if hasattr(row.get(k), "isoformat"):
+                row[k] = row[k].isoformat()
+        return JSONResponse(row, status_code=201)
+
     return app
 
 
