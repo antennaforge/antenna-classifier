@@ -1141,14 +1141,31 @@ def generate_nec_from_form(
     description: str = "",
     model: str = "gpt-5.2",
     json_mode: bool = False,
+    pipeline: bool = False,
 ) -> dict[str, Any]:
     """Generate a NEC file from structured form data.
 
-    When *json_mode* is True the LLM produces a JSON intermediate
-    representation which is mechanically converted to NEC text.
+    When *pipeline* is True the structured 7-step pipeline is used
+    (classify → extract → generate → validate → convert → simulate →
+    feedback).  When *json_mode* is True the single-shot JSON
+    intermediate mode is used instead.
 
     Returns ``{"nec_content": str, "model": str, "usage": dict}``.
     """
+    if pipeline:
+        from .nec_pipeline import pipeline_from_form
+
+        pr = pipeline_from_form(
+            antenna_type=antenna_type,
+            frequency_mhz=frequency_mhz,
+            ground_type=ground_type,
+            description=description,
+            model=model,
+        )
+        result = pr.to_dict()
+        result["json_mode"] = True
+        result["pipeline"] = True
+        return result
     from .nec_calculators import calc_for_type
 
     ground_map = {
@@ -1220,14 +1237,30 @@ def generate_nec_from_pdf(
     extra_instructions: str = "",
     antenna_type: str = "",
     json_mode: bool = False,
+    pipeline: bool = False,
 ) -> dict[str, Any]:
     """Extract text from a PDF and ask the model to produce a NEC file.
 
-    When *json_mode* is True the LLM produces a JSON intermediate
-    representation which is mechanically converted to NEC text.
+    When *pipeline* is True the structured 7-step pipeline is used.
+    When *json_mode* is True the single-shot JSON intermediate mode
+    is used.
 
     Returns ``{"nec_content": str, "pdf_text": str, "model": str, "usage": dict}``.
     """
+    if pipeline:
+        from .nec_pipeline import pipeline_from_pdf
+
+        pr = pipeline_from_pdf(
+            pdf_bytes,
+            antenna_type=antenna_type,
+            model=model,
+            extra_instructions=extra_instructions,
+        )
+        result = pr.to_dict()
+        result["pdf_text"] = pr.source_text
+        result["json_mode"] = True
+        result["pipeline"] = True
+        return result
     pdf_text = extract_pdf_text(pdf_bytes)
     if not pdf_text.strip():
         # Scanned / image-only PDF — try vision OCR
@@ -1385,14 +1418,31 @@ def generate_nec_from_url(
     extra_instructions: str = "",
     antenna_type: str = "",
     json_mode: bool = False,
+    pipeline: bool = False,
 ) -> dict[str, Any]:
     """Fetch a web page, extract text, and produce a NEC file via AI.
 
-    When *json_mode* is True the LLM produces a JSON intermediate
-    representation which is mechanically converted to NEC text.
+    When *pipeline* is True the structured 7-step pipeline is used.
+    When *json_mode* is True the single-shot JSON intermediate mode
+    is used.
 
     Returns ``{"nec_content": str, "url_text": str, "model": str, "usage": dict}``.
     """
+    if pipeline:
+        from .nec_pipeline import pipeline_from_url
+
+        pr = pipeline_from_url(
+            url,
+            antenna_type=antenna_type,
+            model=model,
+            extra_instructions=extra_instructions,
+        )
+        result = pr.to_dict()
+        result["url"] = url
+        result["url_text"] = pr.source_text
+        result["json_mode"] = True
+        result["pipeline"] = True
+        return result
     url_text = extract_url_text(url)
     if not url_text.strip():
         raise ValueError("Could not extract any text from the URL")
