@@ -25,6 +25,7 @@ from antenna_classifier.nec_pipeline import (
     _parse_llm_json,
     _build_extraction_prompt,
     _format_concepts_for_generation,
+    _stamp_moxon_deck,
     _EXTRACTION_SPECS,
 )
 
@@ -731,3 +732,131 @@ class TestExtractionSpecCoverage:
         for t in _EXTRACTION_SPECS:
             assert t in ANTENNA_TYPES, \
                 f"Extraction spec '{t}' is not a canonical antenna type"
+
+
+# ===================================================================
+# Moxon stamper tests
+# ===================================================================
+
+class TestMoxonStamper:
+    """Tests for the deterministic Moxon NEC deck stamper."""
+
+    def test_stamp_produces_valid_deck(self):
+        """Stamped deck has required NEC cards."""
+        deck = _stamp_moxon_deck(14.175)
+        card_types = [c["type"] for c in deck["cards"]]
+        for req in ("GW", "GE", "EX", "FR", "RP", "EN", "LD"):
+            assert req in card_types, f"Missing {req} card"
+
+    def test_stamp_has_six_gw_cards(self):
+        """Moxon needs exactly 6 GW cards (3 driven + 3 reflector)."""
+        deck = _stamp_moxon_deck(14.175)
+        gw_cards = [c for c in deck["cards"] if c["type"] == "GW"]
+        assert len(gw_cards) == 6
+
+    def test_stamp_tags_sequential(self):
+        """GW tags should be 1-6."""
+        deck = _stamp_moxon_deck(14.175)
+        gw_cards = [c for c in deck["cards"] if c["type"] == "GW"]
+        tags = [int(c["params"][0]) for c in gw_cards]
+        assert tags == [1, 2, 3, 4, 5, 6]
+
+    def test_stamp_frequency_in_fr_card(self):
+        """FR card should carry the requested frequency."""
+        for freq in [7.15, 14.175, 28.4]:
+            deck = _stamp_moxon_deck(freq)
+            fr = [c for c in deck["cards"] if c["type"] == "FR"][0]
+            assert fr["params"][4] == freq
+
+    def test_stamp_feed_at_driven_main(self):
+        """EX card should excite GW 2 at the centre segment."""
+        deck = _stamp_moxon_deck(14.175)
+        ex = [c for c in deck["cards"] if c["type"] == "EX"][0]
+        assert ex["params"][1] == 2  # tag 2 = driven main
+        assert ex["params"][2] == 23  # centre of 45 segments
+
+    def test_stamp_scales_with_frequency(self):
+        """Higher frequency → shorter wires."""
+        deck_20m = _stamp_moxon_deck(14.175)
+        deck_10m = _stamp_moxon_deck(28.4)
+        gw20 = [c for c in deck_20m["cards"] if c["type"] == "GW"]
+        gw10 = [c for c in deck_10m["cards"] if c["type"] == "GW"]
+        # Driven main wire (GW 2) X-span should scale ~2:1
+        width_20 = abs(gw20[1]["params"][2] - gw20[1]["params"][5])
+        width_10 = abs(gw10[1]["params"][2] - gw10[1]["params"][5])
+        ratio = width_20 / width_10
+        assert 1.8 < ratio < 2.2, f"Width ratio {ratio:.2f} should be ~2.0"
+
+    def test_stamp_wire_radius(self):
+        """Wire radius should match the requested diameter."""
+        deck = _stamp_moxon_deck(14.175, wire_dia_mm=3.0)
+        gw = [c for c in deck["cards"] if c["type"] == "GW"][0]
+        assert abs(gw["params"][8] - 0.0015) < 1e-6  # 3mm dia → 1.5mm radius
+
+    def test_stamp_passes_validation(self):
+        """Stamped deck should pass validate_deck with no critical issues."""
+        deck = _stamp_moxon_deck(14.175)
+        concepts = ExtractedConcepts(
+            antenna_type="moxon", freq_mhz=14.175,
+        )
+        issues = validate_deck(deck, concepts)
+        critical = [i for i in issues if any(
+            kw in i for kw in ("MISSING", "COLLAPSED", "zero-length",
+                               "NO GW", "radius ≤ 0")
+        )]
+        assert not critical, f"Critical issues: {critical}"
+
+    def test_stamp_converts_to_nec(self):
+        """Stamped deck converts to NEC text with GW cards."""
+        deck = _stamp_moxon_deck(14.175)
+        nec = convert_to_nec(deck)
+        assert "GW" in nec
+        assert "EX" in nec
+        assert "EN" in nec
+
+    def test_stamp_ground_types(self):
+        """Ground type parameter should produce correct cards."""
+        # Free space: GE 0, no GN
+        deck_fs = _stamp_moxon_deck(14.175, ground_type="free_space")
+        types_fs = [c["type"] for c in deck_fs["cards"]]
+        assert "GN" not in types_fs
+
+        # Real ground: GE 0 + GN card present
+        deck_rg = _stamp_moxon_deck(14.175, ground_type="real")
+        types_rg = [c["type"] for c in deck_rg["cards"]]
+        assert "GN" in types_rg
+
+    def test_stamp_custom_height(self):
+        """Custom height should be used in GW Z coordinates."""
+        deck = _stamp_moxon_deck(14.175, height_m=5.0)
+        gw = [c for c in deck["cards"] if c["type"] == "GW"][0]
+        assert gw["params"][4] == 5.0  # z1
+        assert gw["params"][7] == 5.0  # z2
+
+    def test_stamp_tip_gap_geometry(self):
+        """Driven and reflector tips should have the correct gap."""
+        wl = 299_792_458.0 / (14.175e6)
+        expected_gap = 0.010402 * wl  # ~0.220 m
+
+        deck = _stamp_moxon_deck(14.175)
+        gw_cards = [c for c in deck["cards"] if c["type"] == "GW"]
+
+        # GW 1 tip Y (driven tip) = params[3] (y1)
+        drv_tip_y = gw_cards[0]["params"][3]
+        # GW 4 tip Y (reflector tip) = params[3] (y1)
+        ref_tip_y = gw_cards[3]["params"][3]
+
+        actual_gap = drv_tip_y - ref_tip_y
+        assert abs(actual_gap - expected_gap) < 0.01, \
+            f"Gap {actual_gap:.4f}m vs expected {expected_gap:.4f}m"
+
+    def test_stamp_driven_tail_neq_reflector_tail(self):
+        """Driven tail (C) and reflector tail (D) must be different."""
+        deck = _stamp_moxon_deck(14.175)
+        gw_cards = [c for c in deck["cards"] if c["type"] == "GW"]
+        # GW 1 = driven tail: length = abs(y2 - y1)
+        c_len = abs(gw_cards[0]["params"][6] - gw_cards[0]["params"][3])
+        # GW 4 = reflector tail: length = abs(y2 - y1)
+        d_len = abs(gw_cards[3]["params"][6] - gw_cards[3]["params"][3])
+        assert abs(c_len - d_len) > 0.1, \
+            f"C={c_len:.3f} ≈ D={d_len:.3f} — tails should differ"

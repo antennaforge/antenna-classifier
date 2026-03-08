@@ -8,20 +8,20 @@
     "iterations": 1,
     "goal_score": 1.0,
     "steps": 6,
-    "elapsed": 11.5,
-    "tokens": 2617
+    "elapsed": 14.1,
+    "tokens": 2612
   },
   {
     "test": "20m Moxon",
     "status": "ok",
-    "nec2c_pass": false,
+    "nec2c_pass": true,
     "classified_type": "moxon",
     "confidence": 0.8,
-    "iterations": 3,
-    "goal_score": 0.4,
-    "steps": 17,
-    "elapsed": 33.9,
-    "tokens": 12609
+    "iterations": 1,
+    "goal_score": 1.0,
+    "steps": 6,
+    "elapsed": 1.4,
+    "tokens": 618
   },
   {
     "test": "40m Dipole",
@@ -32,8 +32,8 @@
     "iterations": 1,
     "goal_score": 1.0,
     "steps": 6,
-    "elapsed": 6.6,
-    "tokens": 2014
+    "elapsed": 6.8,
+    "tokens": 2041
   },
   {
     "test": "20m Vertical",
@@ -41,11 +41,11 @@
     "nec2c_pass": true,
     "classified_type": "vertical",
     "confidence": 0.8,
-    "iterations": 3,
+    "iterations": 2,
     "goal_score": 1.0,
-    "steps": 16,
-    "elapsed": 39.6,
-    "tokens": 12796
+    "steps": 11,
+    "elapsed": 33.0,
+    "tokens": 7743
   },
   {
     "test": "Cebik2a.pdf",
@@ -55,49 +55,49 @@
     "classified_type": "yagi",
     "confidence": 0.8,
     "iterations": 3,
-    "goal_score": 0.6,
+    "goal_score": 0.4,
     "steps": 17,
-    "elapsed": 39.4,
-    "tokens": 12906
+    "elapsed": 28.4,
+    "tokens": 12795
   },
   {
     "test": "9107030.pdf",
     "note": "Quad loop antenna paper",
     "status": "ok",
     "nec2c_pass": false,
-    "classified_type": "quad",
+    "classified_type": "loop",
     "confidence": 0.8,
     "iterations": 3,
-    "goal_score": 0.6,
-    "steps": 17,
-    "elapsed": 38.6,
-    "tokens": 12138
+    "goal_score": 0.8,
+    "steps": 14,
+    "elapsed": 49.5,
+    "tokens": 13052
   },
   {
     "test": "Ceecom_10-11m_Moxon_user.pdf",
     "note": "Ceecom Moxon user manual",
     "status": "ok",
-    "nec2c_pass": false,
+    "nec2c_pass": true,
     "classified_type": "moxon",
     "confidence": 0.8,
-    "iterations": 3,
-    "goal_score": 0.4,
-    "steps": 17,
-    "elapsed": 51.3,
-    "tokens": 15953
+    "iterations": 1,
+    "goal_score": 1.0,
+    "steps": 6,
+    "elapsed": 5.8,
+    "tokens": 2703
   },
   {
     "test": "3 BAND QUAD LOOP.pdf",
     "note": "Multi-band quad loop",
     "status": "ok",
-    "nec2c_pass": false,
+    "nec2c_pass": true,
     "classified_type": "quad",
     "confidence": 0.8,
     "iterations": 3,
-    "goal_score": 0.8,
-    "steps": 17,
-    "elapsed": 33.9,
-    "tokens": 13279
+    "goal_score": 1.0,
+    "steps": 16,
+    "elapsed": 43.3,
+    "tokens": 15878
   },
   {
     "test": "POTA-PERformer-Antenna-by-KJ6ER-2023-03-1-1.pdf",
@@ -107,22 +107,22 @@
     "classified_type": "vertical",
     "confidence": 0.8,
     "iterations": 3,
-    "goal_score": 0.75,
+    "goal_score": 0.5,
     "steps": 17,
-    "elapsed": 45.4,
-    "tokens": 14887
+    "elapsed": 45.8,
+    "tokens": 15195
   },
   {
     "test": "20m-elevated-vertical-g8ode-iss-1-31.pdf",
     "note": "Elevated vertical for 20m",
     "status": "ok",
-    "nec2c_pass": false,
+    "nec2c_pass": true,
     "classified_type": "vertical",
     "confidence": 0.8,
     "iterations": 3,
-    "goal_score": 0.75,
-    "steps": 17,
-    "elapsed": 46.3,
-    "tokens": 14785
+    "goal_score": 1.0,
+    "steps": 16,
+    "elapsed": 24.0,
+    "tokens": 11824
   }
 ]

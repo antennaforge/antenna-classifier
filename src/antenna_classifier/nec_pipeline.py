@@ -827,6 +827,140 @@ def generate_deck(
 
 
 # ---------------------------------------------------------------------------
+# Deterministic Moxon NEC stamper
+# ---------------------------------------------------------------------------
+# The Moxon has exactly 4 degrees of freedom (A, B, C, D) mapped to 6 GW
+# cards in a fixed U+U topology.  LLMs consistently get the tip-gap geometry
+# wrong, so we compute the coordinates deterministically from known-good
+# reference dimensions that score 5/5 on goals.
+
+# Reference dimensions in wavelength fractions, from moxon.txt 20m
+# design that achieves SWR=1.14 Gain=5.84dBi F/B=35.9dB (5/5 goals).
+_MOXON_REF_HALF_A_WL = 0.18015    # half-width: 3.81 / 21.1494
+_MOXON_REF_B_WL = 0.010402        # tip gap:   0.220 / 21.1494
+_MOXON_REF_C_WL = 0.057638        # driven tail: 1.219 / 21.1494
+_MOXON_REF_D_WL = 0.069882        # reflector tail: 1.478 / 21.1494
+_MOXON_REF_HEIGHT_WL = 0.504424   # height: 10.668 / 21.1494 (≈ λ/2)
+
+# Segment counts matching the reference (odd main for centre-feed)
+_MOXON_SEGS_TAIL_DRV = 7
+_MOXON_SEGS_MAIN = 45
+_MOXON_SEGS_TAIL_REF = 9
+
+
+def _stamp_moxon_deck(
+    freq_mhz: float,
+    wire_dia_mm: float = 1.628,
+    height_m: float | None = None,
+    ground_type: str = "free_space",
+) -> dict[str, Any]:
+    """Build a Moxon JSON deck deterministically from reference geometry.
+
+    Returns the same ``{"cards": [...]}`` format that ``generate_deck()``
+    produces, so it plugs directly into steps 4-7.
+    """
+    wl = _C_MPS / (freq_mhz * 1e6)
+    wire_radius = wire_dia_mm / 2000.0  # metres
+
+    # Scale reference dimensions to target wavelength
+    half_a = _MOXON_REF_HALF_A_WL * wl
+    gap = _MOXON_REF_B_WL * wl
+    c_tail = _MOXON_REF_C_WL * wl
+    d_tail = _MOXON_REF_D_WL * wl
+
+    # Height: use provided, or default to ~λ/2
+    z = height_m if height_m is not None else _MOXON_REF_HEIGHT_WL * wl
+
+    # Coordinate system: gap centred at Y=0, driven at +Y, reflector at -Y
+    y_drv_tip = gap / 2.0
+    y_drv_main = y_drv_tip + c_tail
+    y_ref_tip = -gap / 2.0
+    y_ref_main = y_ref_tip - d_tail
+
+    def _r(v: float) -> float:
+        return round(v, 4)
+
+    cards: list[dict[str, Any]] = []
+
+    # Comment cards
+    cards.append({"type": "CM", "text":
+        f"Moxon rectangle for {freq_mhz:.3f} MHz, "
+        f"{'free space' if ground_type == 'free_space' else 'over ground'}, "
+        f"wire {wire_dia_mm:.3f}mm dia"})
+    cards.append({"type": "CM", "text":
+        f"Stamped from reference geometry: A={2*half_a:.3f}m "
+        f"B={gap*1000:.1f}mm C={c_tail:.3f}m D={d_tail:.3f}m"})
+    cards.append({"type": "CE"})
+
+    # Driven element: GW 1 (left tail), GW 2 (main), GW 3 (right tail)
+    cards.append({"type": "GW", "params": [
+        1, _MOXON_SEGS_TAIL_DRV,
+        _r(-half_a), _r(y_drv_tip), _r(z),
+        _r(-half_a), _r(y_drv_main), _r(z),
+        wire_radius,
+    ]})
+    cards.append({"type": "GW", "params": [
+        2, _MOXON_SEGS_MAIN,
+        _r(-half_a), _r(y_drv_main), _r(z),
+        _r(half_a), _r(y_drv_main), _r(z),
+        wire_radius,
+    ]})
+    cards.append({"type": "GW", "params": [
+        3, _MOXON_SEGS_TAIL_DRV,
+        _r(half_a), _r(y_drv_main), _r(z),
+        _r(half_a), _r(y_drv_tip), _r(z),
+        wire_radius,
+    ]})
+
+    # Reflector: GW 4 (left tail), GW 5 (main), GW 6 (right tail)
+    cards.append({"type": "GW", "params": [
+        4, _MOXON_SEGS_TAIL_REF,
+        _r(-half_a), _r(y_ref_tip), _r(z),
+        _r(-half_a), _r(y_ref_main), _r(z),
+        wire_radius,
+    ]})
+    cards.append({"type": "GW", "params": [
+        5, _MOXON_SEGS_MAIN,
+        _r(-half_a), _r(y_ref_main), _r(z),
+        _r(half_a), _r(y_ref_main), _r(z),
+        wire_radius,
+    ]})
+    cards.append({"type": "GW", "params": [
+        6, _MOXON_SEGS_TAIL_REF,
+        _r(half_a), _r(y_ref_main), _r(z),
+        _r(half_a), _r(y_ref_tip), _r(z),
+        wire_radius,
+    ]})
+
+    # Ground
+    cards.append({"type": "GE", "params": [0]})
+
+    # Conductivity: copper on all wires
+    cards.append({"type": "LD", "params": [5, 0, 0, 0, 58001000, 0, 0]})
+
+    # Excitation at centre of driven main wire (GW 2)
+    feed_seg = (_MOXON_SEGS_MAIN + 1) // 2  # 23 for 45 segments
+    cards.append({"type": "EX", "params": [0, 2, feed_seg, 0, 1, 0]})
+
+    # Ground card (if not free space)
+    if ground_type == "perfect":
+        cards.append({"type": "GN", "params": [1]})
+    elif ground_type == "real":
+        # Average ground: εr=13, σ=5 mS/m
+        cards.append({"type": "GN", "params": [0, 0, 0, 0, 13, 0.005]})
+
+    # Frequency
+    cards.append({"type": "FR", "params": [0, 1, 0, 0, freq_mhz, 0]})
+
+    # Radiation pattern: 5-degree steps
+    cards.append({"type": "RP", "params": [0, 37, 73, 1000, 0, 0, 5, 5]})
+
+    cards.append({"type": "EN"})
+
+    return {"cards": cards}
+
+
+# ---------------------------------------------------------------------------
 # Step 4: Validate JSON deck with calculators
 # ---------------------------------------------------------------------------
 
@@ -1273,28 +1407,48 @@ def run_pipeline(
 
         # --- Step 3: Generate JSON deck ---
         log.info("Pipeline step 3 (iter %d): generating JSON deck", iteration + 1)
-        try:
-            deck, gen_resp = generate_deck(
-                concepts, client=client, model=model,
-                feedback=feedback,
-                history=ooda_history if ooda_history else None,
+
+        # Moxon bypass: deterministic coordinate computation from
+        # known-good reference geometry.  The LLM consistently gets the
+        # tip-gap wrong, so we stamp the deck directly.
+        if concepts.antenna_type == "moxon" and concepts.freq_mhz > 0:
+            deck = _stamp_moxon_deck(
+                freq_mhz=concepts.freq_mhz,
+                wire_dia_mm=concepts.wire_dia_mm or 1.628,
+                height_m=concepts.height_m,
+                ground_type=concepts.ground_type or "free_space",
             )
-            _track_usage(result, gen_resp)
-            # Capture LLM response for conversation continuity
-            last_llm_response = gen_resp.choices[0].message.content or ""
+            last_llm_response = ""
             result.json_deck = deck
             result.steps.append(StepLog(
                 step=3, name="generate", status="ok",
-                detail=f"{len(deck.get('cards', []))} cards",
+                detail=f"stamped moxon — {len(deck.get('cards', []))} cards",
             ))
-            log.info("Step 3: generated %d cards", len(deck.get("cards", [])))
-        except (ValueError, _json.JSONDecodeError) as exc:
-            result.steps.append(StepLog(
-                step=3, name="generate", status="fail", detail=str(exc),
-            ))
-            feedback = f"JSON generation failed: {exc}\nPlease fix and try again."
-            log.warning("Step 3 failed: %s", exc)
-            continue
+            log.info("Step 3: stamped moxon deck (%d cards)",
+                     len(deck.get("cards", [])))
+        else:
+            try:
+                deck, gen_resp = generate_deck(
+                    concepts, client=client, model=model,
+                    feedback=feedback,
+                    history=ooda_history if ooda_history else None,
+                )
+                _track_usage(result, gen_resp)
+                # Capture LLM response for conversation continuity
+                last_llm_response = gen_resp.choices[0].message.content or ""
+                result.json_deck = deck
+                result.steps.append(StepLog(
+                    step=3, name="generate", status="ok",
+                    detail=f"{len(deck.get('cards', []))} cards",
+                ))
+                log.info("Step 3: generated %d cards", len(deck.get("cards", [])))
+            except (ValueError, _json.JSONDecodeError) as exc:
+                result.steps.append(StepLog(
+                    step=3, name="generate", status="fail", detail=str(exc),
+                ))
+                feedback = f"JSON generation failed: {exc}\nPlease fix and try again."
+                log.warning("Step 3 failed: %s", exc)
+                continue
 
         # --- Step 4: Validate with calculators ---
         log.info("Pipeline step 4 (iter %d): validating deck", iteration + 1)
