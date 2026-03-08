@@ -724,6 +724,133 @@ def create_app(
                 row[k] = row[k].isoformat()
         return JSONResponse(row, status_code=201)
 
+    @app.post("/api/my-antennas/upload-pdf-stream")
+    async def generate_from_pdf_stream(request: "Request"):
+        """SSE stream: upload PDF and emit OODA step events during NEC generation."""
+        from starlette.responses import StreamingResponse
+
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        if not hf_user["ai_enabled"]:
+            raise HTTPException(403, "AI features not enabled for your account. Contact admin.")
+        form = await request.form()
+        pdf_file = form.get("pdf")
+        if not pdf_file or not hasattr(pdf_file, "read"):
+            raise HTTPException(400, "No PDF file uploaded")
+
+        name = form.get("name", "").strip() or "PDF Upload"
+        extra = form.get("description", "").strip()
+        hint_type = form.get("antenna_type", "").strip()
+
+        pdf_bytes = await pdf_file.read()
+        if len(pdf_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(400, "PDF too large (max 10 MB)")
+
+        q: queue.Queue[dict | None] = queue.Queue()
+
+        def _on_step(step_log: Any) -> None:
+            phase = _STEP_PHASE.get(step_log.name, -1)
+            q.put({
+                "step": step_log.step,
+                "name": step_log.name,
+                "status": step_log.status,
+                "detail": step_log.detail,
+                "phase": phase,
+            })
+
+        def _run() -> None:
+            try:
+                result = generate_nec_from_pdf(
+                    pdf_bytes,
+                    extra_instructions=extra,
+                    antenna_type=hint_type,
+                    pipeline=True,
+                    on_step=_on_step,
+                )
+                q.put({"_result": result})
+            except Exception as exc:
+                q.put({"_error": str(exc)})
+            finally:
+                q.put(None)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
+        async def _event_stream():
+            import asyncio
+            while True:
+                try:
+                    msg = q.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if msg is None:
+                    break
+                if "_result" in msg:
+                    try:
+                        result = msg["_result"]
+                        nec_content = result["nec_content"]
+                        antenna_type = result.get("classified_type", "")
+                        band = None
+                        freq = None
+                        try:
+                            tmp = tempfile.NamedTemporaryFile(
+                                suffix=".nec", dir=str(_user_nec_dir),
+                                delete=False, mode="w",
+                            )
+                            tmp.write(nec_content)
+                            tmp.close()
+                            parsed = parser.parse_file(Path(tmp.name))
+                            cls = classifier.classify(parsed)
+                            if not antenna_type:
+                                antenna_type = cls.antenna_type
+                            band = cls.band
+                            freq = cls.frequency_mhz
+                        except Exception:
+                            antenna_type = antenna_type or "unknown"
+                        row = create_antenna(
+                            name=name,
+                            description=extra,
+                            antenna_type=antenna_type,
+                            frequency_mhz=freq,
+                            band=band,
+                            nec_content=nec_content,
+                            source="pdf",
+                            metadata={
+                                "model": result.get("model"),
+                                "usage": result.get("usage"),
+                                "pdf_text_preview": result.get("pdf_text", "")[:500],
+                                "iterations": result.get("iterations"),
+                                "classified_type": result.get("classified_type"),
+                                "confidence": result.get("confidence"),
+                                "refinement_log": result.get("refinement_log"),
+                                "steps": result.get("steps"),
+                                "goal_verdict": result.get("goal_verdict"),
+                                "buildability": result.get("buildability"),
+                            },
+                            owner_user_id=hf_user["user_id"],
+                        )
+                        for k in ("created_at", "updated_at"):
+                            if hasattr(row.get(k), "isoformat"):
+                                row[k] = row[k].isoformat()
+                        yield f"data: {json.dumps({'event': 'done', 'antenna': row})}\n\n"
+                    except Exception as exc:
+                        yield f"data: {json.dumps({'event': 'error', 'detail': str(exc)})}\n\n"
+                elif "_error" in msg:
+                    yield f"data: {json.dumps({'event': 'error', 'detail': msg['_error']})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'event': 'step', **msg})}\n\n"
+                await asyncio.sleep(0)
+
+        return StreamingResponse(
+            _event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.post("/api/my-antennas/from-url")
     async def generate_from_url(request: "Request"):
         """Fetch a web page, extract antenna data, generate NEC via AI, save to Postgres."""
@@ -803,6 +930,134 @@ def create_app(
             if hasattr(row.get(k), "isoformat"):
                 row[k] = row[k].isoformat()
         return JSONResponse(row, status_code=201)
+
+    @app.post("/api/my-antennas/from-url-stream")
+    async def generate_from_url_stream(request: "Request"):
+        """SSE stream: fetch web page and emit OODA step events during NEC generation."""
+        from starlette.responses import StreamingResponse
+        from .nec_generator import generate_nec_from_url as _gen_url
+
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        if not hf_user["ai_enabled"]:
+            raise HTTPException(403, "AI features not enabled for your account. Contact admin.")
+
+        body = await request.json()
+        url = body.get("url", "").strip()
+        if not url:
+            raise HTTPException(400, "URL is required")
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "Only http:// and https:// URLs are supported")
+
+        name = body.get("name", "").strip() or "URL Import"
+        extra = body.get("description", "").strip()
+        hint_type = body.get("antenna_type", "").strip()
+
+        q: queue.Queue[dict | None] = queue.Queue()
+
+        def _on_step(step_log: Any) -> None:
+            phase = _STEP_PHASE.get(step_log.name, -1)
+            q.put({
+                "step": step_log.step,
+                "name": step_log.name,
+                "status": step_log.status,
+                "detail": step_log.detail,
+                "phase": phase,
+            })
+
+        def _run() -> None:
+            try:
+                result = _gen_url(
+                    url,
+                    extra_instructions=extra,
+                    antenna_type=hint_type,
+                    pipeline=True,
+                    on_step=_on_step,
+                )
+                q.put({"_result": result})
+            except Exception as exc:
+                q.put({"_error": str(exc)})
+            finally:
+                q.put(None)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
+        async def _event_stream():
+            import asyncio
+            while True:
+                try:
+                    msg = q.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if msg is None:
+                    break
+                if "_result" in msg:
+                    try:
+                        result = msg["_result"]
+                        nec_content = result["nec_content"]
+                        antenna_type = result.get("classified_type", "")
+                        band = None
+                        freq = None
+                        try:
+                            tmp = tempfile.NamedTemporaryFile(
+                                suffix=".nec", dir=str(_user_nec_dir),
+                                delete=False, mode="w",
+                            )
+                            tmp.write(nec_content)
+                            tmp.close()
+                            parsed = parser.parse_file(Path(tmp.name))
+                            cls = classifier.classify(parsed)
+                            if not antenna_type:
+                                antenna_type = cls.antenna_type
+                            band = cls.band
+                            freq = cls.frequency_mhz
+                        except Exception:
+                            antenna_type = antenna_type or "unknown"
+                        row = create_antenna(
+                            name=name,
+                            description=extra or url,
+                            antenna_type=antenna_type,
+                            frequency_mhz=freq,
+                            band=band,
+                            nec_content=nec_content,
+                            source="url",
+                            metadata={
+                                "model": result.get("model"),
+                                "usage": result.get("usage"),
+                                "url": url,
+                                "url_text_preview": result.get("url_text", "")[:500],
+                                "iterations": result.get("iterations"),
+                                "classified_type": result.get("classified_type"),
+                                "confidence": result.get("confidence"),
+                                "refinement_log": result.get("refinement_log"),
+                                "steps": result.get("steps"),
+                                "goal_verdict": result.get("goal_verdict"),
+                                "buildability": result.get("buildability"),
+                            },
+                            owner_user_id=hf_user["user_id"],
+                        )
+                        for k in ("created_at", "updated_at"):
+                            if hasattr(row.get(k), "isoformat"):
+                                row[k] = row[k].isoformat()
+                        yield f"data: {json.dumps({'event': 'done', 'antenna': row})}\n\n"
+                    except Exception as exc:
+                        yield f"data: {json.dumps({'event': 'error', 'detail': str(exc)})}\n\n"
+                elif "_error" in msg:
+                    yield f"data: {json.dumps({'event': 'error', 'detail': msg['_error']})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'event': 'step', **msg})}\n\n"
+                await asyncio.sleep(0)
+
+        return StreamingResponse(
+            _event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.post("/api/my-antennas/surprise")
     async def generate_surprise(request: "Request"):

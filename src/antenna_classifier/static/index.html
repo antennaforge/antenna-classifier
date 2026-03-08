@@ -1492,7 +1492,7 @@ async function submitPdf() {
   const fileInput = document.getElementById('pdf-file');
   if (!fileInput.files.length) { status.innerHTML = '<span style="color:var(--red);">Select a PDF file</span>'; return; }
   btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Uploading & designing… this may take 30-60 seconds';
+  status.innerHTML = _oodaHtml();
   try {
     const fd = new FormData();
     fd.append('pdf', fileInput.files[0]);
@@ -1500,15 +1500,38 @@ async function submitPdf() {
     fd.append('description', document.getElementById('pdf-desc').value);
     const pdfType = document.getElementById('pdf-type').value;
     if (pdfType) fd.append('antenna_type', pdfType);
-    const resp = await fetch(`${BASE_URL}/api/my-antennas/upload-pdf`, { method: 'POST', body: fd });
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/upload-pdf-stream`, { method: 'POST', body: fd });
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
-    const row = await resp.json();
-    status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
-    fileInput.value = '';
-    document.getElementById('pdf-name').value = '';
-    document.getElementById('pdf-desc').value = '';
-    document.getElementById('pdf-type').selectedIndex = 0;
-    await _afterCreate(row);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const msg = JSON.parse(line.slice(6));
+        if (msg.event === 'step') {
+          _oodaSet(msg.phase, msg.status, msg.name + ': ' + (msg.detail || ''));
+        } else if (msg.event === 'done') {
+          status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+          fileInput.value = '';
+          document.getElementById('pdf-name').value = '';
+          document.getElementById('pdf-desc').value = '';
+          document.getElementById('pdf-type').selectedIndex = 0;
+          await _afterCreate(msg.antenna);
+          return;
+        } else if (msg.event === 'error') {
+          throw new Error(msg.detail);
+        }
+      }
+    }
+    if (!status.querySelector('.done-check')) {
+      status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+    }
   } catch (e) {
     status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
   } finally { btn.disabled = false; }
@@ -1520,7 +1543,7 @@ async function submitUrl() {
   const url = document.getElementById('url-input').value.trim();
   if (!url) { status.innerHTML = '<span style="color:var(--red);">URL is required</span>'; return; }
   btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Fetching page & designing… this may take 30-60 seconds';
+  status.innerHTML = _oodaHtml();
   try {
     const body = {
       url,
@@ -1528,17 +1551,40 @@ async function submitUrl() {
       description: document.getElementById('url-desc').value,
       antenna_type: document.getElementById('url-type').value,
     };
-    const resp = await fetch(`${BASE_URL}/api/my-antennas/from-url`, {
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/from-url-stream`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
-    const row = await resp.json();
-    status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
-    document.getElementById('url-input').value = '';
-    document.getElementById('url-name').value = '';
-    document.getElementById('url-desc').value = '';
-    document.getElementById('url-type').selectedIndex = 0;
-    await _afterCreate(row);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const msg = JSON.parse(line.slice(6));
+        if (msg.event === 'step') {
+          _oodaSet(msg.phase, msg.status, msg.name + ': ' + (msg.detail || ''));
+        } else if (msg.event === 'done') {
+          status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+          document.getElementById('url-input').value = '';
+          document.getElementById('url-name').value = '';
+          document.getElementById('url-desc').value = '';
+          document.getElementById('url-type').selectedIndex = 0;
+          await _afterCreate(msg.antenna);
+          return;
+        } else if (msg.event === 'error') {
+          throw new Error(msg.detail);
+        }
+      }
+    }
+    if (!status.querySelector('.done-check')) {
+      status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+    }
   } catch (e) {
     status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
   } finally { btn.disabled = false; }

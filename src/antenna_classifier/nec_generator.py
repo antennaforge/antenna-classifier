@@ -1281,6 +1281,7 @@ def generate_nec_from_pdf(
     antenna_type: str = "",
     json_mode: bool = False,
     pipeline: bool = False,
+    on_step: Any | None = None,
 ) -> dict[str, Any]:
     """Extract text from a PDF and ask the model to produce a NEC file.
 
@@ -1298,6 +1299,7 @@ def generate_nec_from_pdf(
             antenna_type=antenna_type,
             model=model,
             extra_instructions=extra_instructions,
+            on_step=on_step,
         )
         result = pr.to_dict()
         result["pdf_text"] = pr.source_text
@@ -1472,6 +1474,7 @@ def generate_nec_from_url(
     antenna_type: str = "",
     json_mode: bool = False,
     pipeline: bool = False,
+    on_step: Any | None = None,
 ) -> dict[str, Any]:
     """Fetch a web page, extract text, and produce a NEC file via AI.
 
@@ -1489,6 +1492,7 @@ def generate_nec_from_url(
             antenna_type=antenna_type,
             model=model,
             extra_instructions=extra_instructions,
+            on_step=on_step,
         )
         result = pr.to_dict()
         result["url"] = url
