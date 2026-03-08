@@ -53,12 +53,21 @@ You are an expert antenna engineer who generates NEC2 input files.
 15. When element lengths and spacings are given in inches or feet, convert
     them to metres (1 inch = 0.0254 m, 1 foot = 0.3048 m).  If a "total
     length" is given, the half-length extends ±Y (or ±X) from the boom.
+16. If the source document describes a transmission line, phase line, or
+    phasing stub connecting two elements, you MUST model it with a TL card.
+    TL cards go AFTER GE and BEFORE EX.  Format:
+      TL tag1 seg1 tag2 seg2 Z0 length VR1 VI1 VR2 VI2
+    where tag1/seg1 and tag2/seg2 are the wire endpoints, Z0 is the line
+    impedance in ohms, and length is the physical length in metres (0 = use
+    NEC-computed distance).  Example — 250 Ω phase line between wires 1 and 2:
+      TL 1 11 2 11 250.0 0.0 0.0 0.0 0.0 0.0
 
 **NEC2 card format reference:**
 - CM <text>
 - CE
 - GW tag segs x1 y1 z1 x2 y2 z2 radius
 - GE ground_type
+- TL tag1 seg1 tag2 seg2 Z0 length VR1 VI1 VR2 VI2
 - EX ex_type tag seg v_real v_imag ...
 - FR fr_type n_freq 0 0 start_mhz step_mhz
 - GN gn_type ...
@@ -290,7 +299,7 @@ def _validate_nec(nec: str) -> None:
     gw_lines: list[str] = []
     for line in nec.splitlines():
         token = line.split()[0].upper() if line.split() else ""
-        if token in ("CM", "CE", "GW", "GE", "GN", "EX", "FR", "RP", "EN"):
+        if token in ("CM", "CE", "GW", "GE", "GN", "TL", "EX", "FR", "RP", "EN"):
             cards_present.add(token)
         if token == "GW":
             gw_lines.append(line.strip())
