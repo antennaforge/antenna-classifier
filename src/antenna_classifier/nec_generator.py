@@ -4,14 +4,23 @@ Given an antenna description (from a form or extracted from a PDF),
 calls the OpenAI chat completions API to produce a valid NEC2 input
 deck.  The output is validated with the project parser + validator
 before being returned.
+
+The OODA refinement loop layers:
+  1. Structural validation (parse + validate)
+  2. Reverse classification (classify + fingerprint → type match)
+  3. Simulation verification (nec2c → goals check)
+  4. Buildability assessment (geometry → practical score)
+  5. Type-specific policy (structured improvement prompts)
 """
 
 from __future__ import annotations
 
 import io
+import logging
 import os
 import pathlib
 import re
+import tempfile
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -130,6 +139,396 @@ def _load_type_context(antenna_type: str) -> str:
     return ""
 
 
+log = logging.getLogger(__name__)
+
+# Maximum refinement iterations (initial generation + correction rounds)
+_MAX_REFINE = 3
+# Minimum classifier confidence to accept a type match
+_CONFIDENCE_THRESHOLD = 0.6
+
+# Minimum buildability score to accept without flagging
+_BUILDABILITY_WARN = 40.0
+
+# Minimum goal score to accept (0–1)
+_GOAL_SCORE_THRESHOLD = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Simulation from NEC text (tempfile bridge)
+# ---------------------------------------------------------------------------
+
+def _extract_freq_from_nec(nec: str) -> float:
+    """Extract design frequency (MHz) from the FR card."""
+    for line in nec.splitlines():
+        parts = re.split(r"[,\s]+", line.strip())
+        if parts and parts[0].upper() == "FR":
+            try:
+                return float(parts[5])
+            except (ValueError, IndexError):
+                pass
+    return 0.0
+
+
+def _simulate_nec_text(nec: str) -> "SimulationResult | None":
+    """Run nec2c simulation on NEC text via the solver API.
+
+    Writes to a temp file, calls simulate(), returns result.
+    Returns None if the solver is unavailable.
+    """
+    from .simulator import simulate
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=".nec", mode="w", delete=False,
+        ) as f:
+            f.write(nec)
+            tmp_path = f.name
+        result = simulate(tmp_path)
+        return result
+    except Exception as exc:
+        log.warning("Simulation unavailable: %s", exc)
+        return None
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except (OSError, UnboundLocalError):
+            pass
+
+
+def _evaluate_full(
+    nec: str,
+    antenna_type: str,
+    freq_mhz: float = 0.0,
+) -> dict[str, Any]:
+    """Run simulation + goals + buildability on a NEC string.
+
+    Returns a dict with:
+      - sim_ok (bool)
+      - sim_result (dict | None)
+      - goal_verdict (dict | None)
+      - buildability (dict | None)
+      - feedback (list[str]) — human-readable issues for the LLM
+      - passed (bool) — all layers acceptable
+    """
+    from .nec_goals import goals_for_type, evaluate_goals
+    from .nec_buildability import assess_buildability
+
+    if not freq_mhz:
+        freq_mhz = _extract_freq_from_nec(nec)
+
+    feedback: list[str] = []
+    result: dict[str, Any] = {
+        "sim_ok": False,
+        "sim_result": None,
+        "goal_verdict": None,
+        "buildability": None,
+        "feedback": feedback,
+        "passed": False,
+    }
+
+    # --- Simulation ---
+    sim = _simulate_nec_text(nec)
+    if sim is None:
+        # Solver not running — skip simulation layer, still assess buildability
+        feedback.append("NOTE: NEC solver unavailable — skipping simulation verification.")
+    elif not sim.ok:
+        feedback.append(f"SIMULATION FAILED: {sim.error}")
+        result["sim_result"] = sim.to_dict() if sim else None
+        # Buildability can still be assessed from geometry alone
+    else:
+        result["sim_ok"] = True
+        result["sim_result"] = sim.to_dict()
+
+        # --- Goal evaluation ---
+        goals = goals_for_type(antenna_type)
+        verdict = evaluate_goals(goals, sim, nec, freq_mhz)
+        result["goal_verdict"] = verdict.to_dict()
+
+        if not verdict.passed:
+            feedback.append(
+                f"GOAL CHECK FAILED ({verdict.checks_passed}/{verdict.checks_total} "
+                f"passed, score {verdict.score:.2f}):"
+            )
+            for issue in verdict.feedback:
+                feedback.append(f"  • {issue}")
+
+    # --- Buildability ---
+    build = assess_buildability(nec, antenna_type, freq_mhz)
+    result["buildability"] = build.to_dict()
+
+    if build.score < _BUILDABILITY_WARN:
+        feedback.append(
+            f"BUILDABILITY WARNING: Score {build.score}/100 ({build.grade}). "
+            f"Top risks: {'; '.join(build.top_risks[:2])}"
+        )
+
+    # --- Overall pass ---
+    goal_ok = True
+    if result.get("goal_verdict"):
+        goal_ok = result["goal_verdict"].get("passed", False)
+    sim_ok = result["sim_ok"] or sim is None  # pass if solver unavailable
+
+    result["passed"] = sim_ok and goal_ok
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Reverse-classification analysis
+# ---------------------------------------------------------------------------
+
+def _analyze_nec(nec: str, target_type: str | None) -> dict[str, Any]:
+    """Parse, validate, classify, and fingerprint a generated NEC string.
+
+    Returns a dict with analysis results:
+      - valid (bool): passes structural validation
+      - type_match (bool): classified type matches target
+      - classified_type (str)
+      - confidence (float)
+      - evidence (list[str])
+      - fingerprint (dict)
+      - feedback (list[str]): human-readable issues for the LLM
+    """
+    from . import parser, validator, classifier
+    from .fingerprint import fingerprint as make_fp
+
+    feedback: list[str] = []
+    result: dict[str, Any] = {
+        "valid": False,
+        "type_match": False,
+        "classified_type": "unknown",
+        "confidence": 0.0,
+        "evidence": [],
+        "fingerprint": {},
+        "feedback": feedback,
+    }
+
+    # --- Parse ---
+    try:
+        parsed = parser.parse_text(nec)
+    except Exception as exc:
+        feedback.append(f"NEC PARSE ERROR: {exc}")
+        return result
+
+    # --- Validate ---
+    vr = validator.validate(parsed)
+    if not vr.valid:
+        for issue in vr.errors:
+            loc = f" (line {issue.line})" if issue.line else ""
+            feedback.append(f"VALIDATION ERROR{loc}: {issue.message}")
+    for issue in vr.warnings:
+        feedback.append(f"WARNING: {issue.message}")
+    result["valid"] = vr.valid
+
+    # --- Classify ---
+    cls = classifier.classify(parsed)
+    result["classified_type"] = cls.antenna_type
+    result["confidence"] = cls.confidence
+    result["evidence"] = list(cls.evidence)
+
+    # --- Fingerprint ---
+    fp = make_fp(parsed)
+    result["fingerprint"] = {
+        "n_gw": fp.n_gw, "n_tl": fp.n_tl, "n_ex": fp.n_ex,
+        "n_ld": fp.n_ld, "n_tags": fp.n_tags,
+        "signature": fp.signature,
+    }
+
+    # --- Type-match check ---
+    if target_type:
+        if cls.antenna_type == target_type and cls.confidence >= _CONFIDENCE_THRESHOLD:
+            result["type_match"] = True
+        else:
+            feedback.append(
+                f"CLASSIFICATION MISMATCH: Target antenna type is '{target_type}', "
+                f"but your output classifies as '{cls.antenna_type}' "
+                f"(confidence {cls.confidence:.2f}).\n"
+                f"  Classifier evidence: {cls.evidence}\n"
+                f"  Fingerprint: {fp.n_gw} GW wires, {fp.n_tl} TL cards, "
+                f"{fp.n_ex} EX sources, {fp.n_tags} unique tags.\n"
+                f"  Please restructure the geometry so it matches a "
+                f"'{target_type}' antenna."
+            )
+    else:
+        # No explicit target — accept any confident, non-trivial classification
+        result["type_match"] = (
+            cls.confidence >= 0.5
+            and cls.antenna_type not in ("unknown", "wire_object")
+        )
+
+    return result
+
+
+def _generate_and_refine(
+    messages: list[dict[str, str]],
+    target_type: str | None,
+    model: str = "gpt-5.2",
+    max_iterations: int = _MAX_REFINE,
+    freq_mhz: float = 0.0,
+) -> dict[str, Any]:
+    """Generate a NEC file and iteratively refine it via the 5-layer OODA loop.
+
+    Layers (applied in order, each iteration):
+      1. Structural validation (parse errors → immediate retry)
+      2. Reverse classification (type match + fingerprint)
+      3. Simulation verification (nec2c → goals check)
+      4. Buildability assessment (practical construction score)
+      5. Type-specific policy (structured improvement prompt)
+
+    *messages* is the initial ``[system, user]`` message list.
+    *target_type* is the expected antenna type (or ``None`` for best-effort).
+
+    Returns a dict with keys: nec_content, usage, iterations, refinement_log,
+    classified_type, confidence, goal_verdict, buildability.
+    """
+    from .nec_policies import policy_for_type
+
+    client = _get_client()
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    refinement_log: list[dict[str, Any]] = []
+    nec = ""
+    analysis: dict[str, Any] = {}
+    eval_result: dict[str, Any] = {}
+    finish_reason = ""
+
+    # Work on a mutable copy so callers' list isn't modified
+    msgs = [dict(m) for m in messages]
+
+    # Get the improvement policy for this type (used for structured feedback)
+    policy = policy_for_type(target_type or "generic")
+
+    for iteration in range(max_iterations):
+        resp = client.chat.completions.create(
+            model=model,
+            messages=msgs,
+            temperature=0.3,
+            max_completion_tokens=8192,
+        )
+        content = resp.choices[0].message.content or ""
+        finish_reason = resp.choices[0].finish_reason or ""
+        if resp.usage:
+            total_usage["prompt_tokens"] += resp.usage.prompt_tokens
+            total_usage["completion_tokens"] += resp.usage.completion_tokens
+
+        nec = _extract_nec(content)
+
+        # --- Layer 1: Lightweight structural check ---
+        try:
+            _validate_nec(nec)
+        except ValueError as exc:
+            log.info("Refinement iter %d: structural error — %s", iteration + 1, exc)
+            refinement_log.append({
+                "iteration": iteration + 1,
+                "layer": "structural",
+                "issue": str(exc),
+                "passed": False,
+            })
+            if iteration < max_iterations - 1:
+                msgs.append({"role": "assistant", "content": content})
+                msgs.append({"role": "user", "content": (
+                    f"Your output has a structural error:\n  {exc}\n"
+                    "Please output a corrected, complete NEC2 deck."
+                )})
+            continue
+
+        # --- Layer 2: Reverse-classification analysis ---
+        analysis = _analyze_nec(nec, target_type)
+        log.info(
+            "Refinement iter %d: classified=%s conf=%.2f valid=%s type_match=%s",
+            iteration + 1, analysis["classified_type"],
+            analysis["confidence"], analysis["valid"], analysis["type_match"],
+        )
+
+        classification_passed = analysis["valid"] and analysis["type_match"]
+
+        if not classification_passed:
+            refinement_log.append({
+                "iteration": iteration + 1,
+                "layer": "classification",
+                "classified_type": analysis["classified_type"],
+                "confidence": analysis["confidence"],
+                "evidence": analysis["evidence"],
+                "fingerprint": analysis["fingerprint"],
+                "passed": False,
+            })
+            # Feed classification feedback and retry
+            if analysis["feedback"] and iteration < max_iterations - 1:
+                feedback_text = (
+                    "I analysed your NEC output with our antenna classifier and "
+                    "found these issues:\n\n"
+                    + "\n".join(f"• {f}" for f in analysis["feedback"])
+                    + "\n\nPlease output a corrected NEC2 deck that addresses "
+                    "all issues above. Output ONLY the NEC deck, no commentary."
+                )
+                msgs.append({"role": "assistant", "content": content})
+                msgs.append({"role": "user", "content": feedback_text})
+            continue
+
+        # --- Layers 3+4: Simulation + Goals + Buildability ---
+        detected_type = target_type or analysis["classified_type"]
+        eval_result = _evaluate_full(nec, detected_type, freq_mhz)
+
+        log.info(
+            "Refinement iter %d: sim_ok=%s goal_passed=%s buildability=%.0f",
+            iteration + 1,
+            eval_result.get("sim_ok"),
+            eval_result.get("passed"),
+            (eval_result.get("buildability") or {}).get("score", 0),
+        )
+
+        iter_log: dict[str, Any] = {
+            "iteration": iteration + 1,
+            "layer": "full_evaluation",
+            "classified_type": analysis["classified_type"],
+            "confidence": analysis["confidence"],
+            "evidence": analysis["evidence"],
+            "fingerprint": analysis["fingerprint"],
+            "sim_ok": eval_result.get("sim_ok"),
+            "goal_verdict": eval_result.get("goal_verdict"),
+            "buildability_score": (eval_result.get("buildability") or {}).get("score"),
+            "passed": eval_result.get("passed", False),
+        }
+        refinement_log.append(iter_log)
+
+        if eval_result.get("passed", False):
+            break
+
+        # --- Layer 5: Policy-driven structured feedback ---
+        if eval_result.get("feedback") and iteration < max_iterations - 1:
+            all_feedback = list(analysis.get("feedback", []))
+            all_feedback.extend(eval_result.get("feedback", []))
+
+            # Build score summary for the policy
+            score_summary: dict[str, Any] = {}
+            gv = eval_result.get("goal_verdict")
+            if gv:
+                score_summary["goal_score"] = f"{gv.get('score', 0):.2f}"
+                score_summary["goal_checks"] = (
+                    f"{gv.get('checks_passed', 0)}/{gv.get('checks_total', 0)}"
+                )
+            bld = eval_result.get("buildability")
+            if bld:
+                score_summary["buildability"] = f"{bld.get('score', 0):.0f}/100"
+
+            # Use the type-specific policy for structured improvement prompt
+            improvement_text = policy.improvement_prompt(
+                feedback=all_feedback,
+                score_summary=score_summary,
+            )
+            msgs.append({"role": "assistant", "content": content})
+            msgs.append({"role": "user", "content": improvement_text})
+
+    return {
+        "nec_content": nec,
+        "usage": {**total_usage, "finish_reason": finish_reason},
+        "iterations": len(refinement_log),
+        "refinement_log": refinement_log,
+        "classified_type": analysis.get("classified_type", "unknown"),
+        "confidence": analysis.get("confidence", 0.0),
+        "goal_verdict": eval_result.get("goal_verdict"),
+        "buildability": eval_result.get("buildability"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # PDF text extraction
 # ---------------------------------------------------------------------------
@@ -191,6 +590,8 @@ def generate_nec_from_form(
 
     Returns ``{"nec_content": str, "model": str, "usage": dict}``.
     """
+    from .nec_calculators import calc_for_type
+
     ground_map = {
         "free_space": "free space (no ground plane, GE 0)",
         "perfect": "perfect ground (GN 1, GE 1)",
@@ -207,6 +608,25 @@ def generate_nec_from_form(
     if description.strip():
         user_msg += f"\nAdditional details:\n{description.strip()}\n"
 
+    # Inject computed starting dimensions from the calculator
+    calc = calc_for_type(antenna_type, frequency_mhz)
+    if calc is not None:
+        user_msg += (
+            f"\n--- COMPUTED STARTING DIMENSIONS ---\n"
+            f"{calc.summary()}\n"
+        )
+        for note in calc.notes:
+            user_msg += f"  • {note}\n"
+        if calc.nec_hints:
+            user_msg += "NEC modelling hints:\n"
+            for hint in calc.nec_hints:
+                user_msg += f"  • {hint}\n"
+        user_msg += (
+            "Use these dimensions as your starting point. "
+            "They are physics-based and should be close to optimal.\n"
+            "--- END DIMENSIONS ---\n"
+        )
+
     type_ctx = _load_type_context(antenna_type)
     if type_ctx:
         user_msg += (
@@ -214,28 +634,17 @@ def generate_nec_from_form(
             f"{type_ctx}\n--- END REFERENCE ---\n"
         )
 
-    client = _get_client()
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.3,
-        max_completion_tokens=8192,
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_msg},
+    ]
+
+    result = _generate_and_refine(
+        messages, target_type=antenna_type, model=model,
+        freq_mhz=frequency_mhz,
     )
-    content = resp.choices[0].message.content or ""
-    nec = _extract_nec(content)
-    _validate_nec(nec)
-    return {
-        "nec_content": nec,
-        "model": model,
-        "usage": {
-            "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
-            "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
-            "finish_reason": resp.choices[0].finish_reason,
-        },
-    }
+    result["model"] = model
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -278,29 +687,19 @@ def generate_nec_from_pdf(
                 f"{type_ctx}\n--- END REFERENCE ---\n"
             )
 
-    client = _get_client()
-    resp = client.chat.completions.create(
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_msg},
+    ]
+
+    result = _generate_and_refine(
+        messages,
+        target_type=antenna_type or None,
         model=model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.3,
-        max_completion_tokens=8192,
     )
-    content = resp.choices[0].message.content or ""
-    nec = _extract_nec(content)
-    _validate_nec(nec)
-    return {
-        "nec_content": nec,
-        "pdf_text": pdf_text[:4000],
-        "model": model,
-        "usage": {
-            "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
-            "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
-            "finish_reason": resp.choices[0].finish_reason,
-        },
-    }
+    result["pdf_text"] = pdf_text[:4000]
+    result["model"] = model
+    return result
 
 
 # ---------------------------------------------------------------------------

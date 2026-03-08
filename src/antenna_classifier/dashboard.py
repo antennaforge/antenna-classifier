@@ -412,13 +412,20 @@ def create_app(
         row = create_antenna(
             name=name,
             description=description,
-            antenna_type=antenna_type,
+            antenna_type=result.get("classified_type", antenna_type),
             frequency_mhz=frequency_mhz,
             band=band,
             ground_type=ground_type,
             nec_content=nec_content,
             source="form",
-            metadata={"model": result.get("model"), "usage": result.get("usage")},
+            metadata={
+                "model": result.get("model"),
+                "usage": result.get("usage"),
+                "iterations": result.get("iterations"),
+                "classified_type": result.get("classified_type"),
+                "confidence": result.get("confidence"),
+                "refinement_log": result.get("refinement_log"),
+            },
             owner_user_id=hf_user["user_id"],
         )
         for k in ("created_at", "updated_at"):
@@ -535,7 +542,11 @@ def create_app(
 
         nec_content = result["nec_content"]
 
-        # Classify
+        # Use classification from the refinement loop if available,
+        # otherwise fall back to a fresh classify pass
+        antenna_type = result.get("classified_type", "")
+        band = None
+        freq = None
         try:
             tmp = tempfile.NamedTemporaryFile(
                 suffix=".nec", dir=str(_user_nec_dir), delete=False, mode="w",
@@ -544,13 +555,12 @@ def create_app(
             tmp.close()
             parsed = parser.parse_file(Path(tmp.name))
             cls = classifier.classify(parsed)
-            antenna_type = cls.antenna_type
+            if not antenna_type:
+                antenna_type = cls.antenna_type
             band = cls.band
             freq = cls.frequency_mhz
         except Exception:
-            antenna_type = "unknown"
-            band = None
-            freq = None
+            antenna_type = antenna_type or "unknown"
 
         row = create_antenna(
             name=name,
@@ -564,6 +574,10 @@ def create_app(
                 "model": result.get("model"),
                 "usage": result.get("usage"),
                 "pdf_text_preview": result.get("pdf_text", "")[:500],
+                "iterations": result.get("iterations"),
+                "classified_type": result.get("classified_type"),
+                "confidence": result.get("confidence"),
+                "refinement_log": result.get("refinement_log"),
             },
             owner_user_id=hf_user["user_id"],
         )
