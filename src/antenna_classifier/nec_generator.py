@@ -186,7 +186,7 @@ def generate_nec_from_form(
             {"role": "user", "content": user_msg},
         ],
         temperature=0.3,
-        max_tokens=8192,
+        max_completion_tokens=8192,
     )
     content = resp.choices[0].message.content or ""
     nec = _extract_nec(content)
@@ -241,7 +241,7 @@ def generate_nec_from_pdf(
             {"role": "user", "content": user_msg},
         ],
         temperature=0.3,
-        max_tokens=8192,
+        max_completion_tokens=8192,
     )
     content = resp.choices[0].message.content or ""
     nec = _extract_nec(content)
