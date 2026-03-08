@@ -503,6 +503,52 @@ class TestValidateDeck:
         issues = validate_deck(deck, concepts)
         assert any("NO GW" in i for i in issues)
 
+    def test_tl_at_wire_endpoint_flagged(self):
+        """TL card connecting at segment 21 (end) of a 21-segment wire."""
+        deck = _make_deck([
+            {"type": "GW", "params": [1, 21, 0, -5, 10, 0, 5, 10, 0.001]},
+            {"type": "GW", "params": [2, 21, 0, -5, 12, 0, 5, 12, 0.001]},
+            {"type": "GE", "params": [0]},
+            {"type": "TL", "params": [1, 21, 2, 21, 250, 0, 0, 0, 0, 0]},
+            {"type": "EX", "params": [0, 2, 11, 0, 1.0, 0.0]},
+            {"type": "FR", "params": [0, 1, 0, 0, 28.4, 0]},
+            {"type": "EN"},
+        ])
+        concepts = ExtractedConcepts(antenna_type="yagi", freq_mhz=28.4)
+        issues = validate_deck(deck, concepts)
+        tl_issues = [i for i in issues if "TL" in i and "END" in i]
+        assert len(tl_issues) == 2  # both ports at endpoints
+
+    def test_tl_at_wire_centre_accepted(self):
+        """TL card connecting at centre segments — no TL issues."""
+        deck = _make_deck([
+            {"type": "GW", "params": [1, 21, 0, -5, 10, 0, 5, 10, 0.001]},
+            {"type": "GW", "params": [2, 21, 0, -5, 12, 0, 5, 12, 0.001]},
+            {"type": "GE", "params": [0]},
+            {"type": "TL", "params": [1, 11, 2, 11, 250, 0, 0, 0, 0, 0]},
+            {"type": "EX", "params": [0, 2, 11, 0, 1.0, 0.0]},
+            {"type": "FR", "params": [0, 1, 0, 0, 28.4, 0]},
+            {"type": "EN"},
+        ])
+        concepts = ExtractedConcepts(antenna_type="yagi", freq_mhz=28.4)
+        issues = validate_deck(deck, concepts)
+        tl_issues = [i for i in issues if "TL" in i and "END" in i]
+        assert len(tl_issues) == 0
+
+    def test_tl_references_nonexistent_wire(self):
+        """TL referencing a wire tag that has no GW card."""
+        deck = _make_deck([
+            {"type": "GW", "params": [1, 21, 0, -5, 10, 0, 5, 10, 0.001]},
+            {"type": "GE", "params": [0]},
+            {"type": "TL", "params": [1, 11, 99, 11, 250, 0, 0, 0, 0, 0]},
+            {"type": "EX", "params": [0, 1, 11, 0, 1.0, 0.0]},
+            {"type": "FR", "params": [0, 1, 0, 0, 28.4, 0]},
+            {"type": "EN"},
+        ])
+        concepts = ExtractedConcepts(antenna_type="yagi", freq_mhz=28.4)
+        issues = validate_deck(deck, concepts)
+        assert any("no GW card" in i for i in issues)
+
 
 # ===================================================================
 # Test convert_to_nec

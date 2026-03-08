@@ -661,6 +661,10 @@ array of NEC card objects.  Each card:
 4. Segments: ~10-20 per half-wavelength.
 5. Always: CM → CE → GW... → GE → control cards → EN.
 6. Feed the driven element at its centre segment.
+7. TL (transmission line) cards: both ports MUST connect at the CENTRE segment
+   of their respective wires, NOT at segment 1 or the last segment.
+   For a wire with N segments, the centre is segment (N+1)/2.
+   TL segments should match the feedpoint (EX segment) positions.
 
 Output ONLY the JSON object. No markdown fences, no commentary.
 """
@@ -1088,6 +1092,38 @@ def validate_deck(
                         f"FR FREQUENCY MISMATCH: FR card says {fr_freq} MHz, "
                         f"expected {concepts.freq_mhz} MHz"
                     )
+
+    # --- TL card segment validation ---
+    # Build a map of wire tag → number of segments for cross-referencing
+    wire_segs: dict[int, int] = {}
+    for gw in gw_cards:
+        p = gw.get("params", [])
+        if len(p) >= 9:
+            wire_segs[int(p[0])] = int(p[1])
+
+    for card in cards:
+        if card.get("type") != "TL":
+            continue
+        p = card.get("params", [])
+        if len(p) < 4:
+            continue
+        tag1, seg1, tag2, seg2 = int(p[0]), int(p[1]), int(p[2]), int(p[3])
+        for tag, seg, label in [
+            (tag1, seg1, "port 1"),
+            (tag2, seg2, "port 2"),
+        ]:
+            n_segs = wire_segs.get(tag)
+            if n_segs is None:
+                issues.append(
+                    f"TL {label}: references wire tag {tag} which has no GW card"
+                )
+            elif seg == 1 or seg == n_segs:
+                centre = (n_segs + 1) // 2
+                issues.append(
+                    f"TL {label}: segment {seg} is at the END of wire {tag} "
+                    f"({n_segs} segs). Transmission lines should connect at "
+                    f"the centre segment ({centre}), not at endpoints."
+                )
 
     # --- Calculator cross-check ---
     if concepts.freq_mhz > 0:
