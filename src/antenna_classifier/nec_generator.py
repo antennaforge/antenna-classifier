@@ -241,7 +241,7 @@ def _evaluate_full(
 
         # --- Goal evaluation ---
         goals = goals_for_type(antenna_type)
-        verdict = evaluate_goals(goals, sim, nec, freq_mhz)
+        verdict = evaluate_goals(goals, sim, nec_text=nec, freq_mhz=freq_mhz)
         result["goal_verdict"] = verdict.to_dict()
 
         if not verdict.passed:
@@ -698,6 +698,140 @@ def generate_nec_from_pdf(
         model=model,
     )
     result["pdf_text"] = pdf_text[:4000]
+    result["model"] = model
+    return result
+
+
+# ---------------------------------------------------------------------------
+# URL text extraction
+# ---------------------------------------------------------------------------
+
+def extract_url_text(url: str, max_chars: int = 20000) -> str:
+    """Fetch a URL and extract plain text + tables via BeautifulSoup.
+
+    Strips scripts/styles, preserves table structure as pipe-delimited
+    rows, and returns clean text suitable for the LLM prompt.
+    """
+    import urllib.request
+    from html import unescape
+
+    # Validate URL scheme
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("Only http:// and https:// URLs are supported")
+
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "AntennaClassifier/1.0 (NEC research tool)"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 — validated scheme
+        raw = resp.read()
+
+    # Detect encoding
+    charset = resp.headers.get_content_charset() or "utf-8"
+    try:
+        html = raw.decode(charset)
+    except (UnicodeDecodeError, LookupError):
+        html = raw.decode("utf-8", errors="replace")
+
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Remove script, style, nav, footer
+    for tag in soup.find_all(["script", "style", "nav", "footer", "header"]):
+        tag.decompose()
+
+    parts: list[str] = []
+    total = 0
+
+    # Extract tables with structure preserved
+    for table in soup.find_all("table"):
+        rows: list[str] = []
+        for tr in table.find_all("tr"):
+            cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+            if any(cells):
+                rows.append(" | ".join(cells))
+        if rows:
+            block = "\n[TABLE]\n" + "\n".join(rows) + "\n[/TABLE]\n"
+            parts.append(block)
+            total += len(block)
+        table.decompose()  # remove so it doesn't duplicate in body text
+
+    # Remaining body text
+    body_text = soup.get_text(separator="\n", strip=True)
+    body_text = unescape(body_text)
+    # Collapse blank lines
+    body_text = re.sub(r"\n{3,}", "\n\n", body_text)
+    parts.insert(0, body_text)
+    total += len(body_text)
+
+    full = "\n".join(parts)
+    return full[:max_chars]
+
+
+# ---------------------------------------------------------------------------
+# NEC generation from URL
+# ---------------------------------------------------------------------------
+
+def generate_nec_from_url(
+    url: str,
+    *,
+    model: str = "gpt-5.2",
+    extra_instructions: str = "",
+    antenna_type: str = "",
+) -> dict[str, Any]:
+    """Fetch a web page, extract text, and produce a NEC file via AI.
+
+    Returns ``{"nec_content": str, "url_text": str, "model": str, "usage": dict}``.
+    """
+    url_text = extract_url_text(url)
+    if not url_text.strip():
+        raise ValueError("Could not extract any text from the URL")
+
+    user_msg = (
+        "Below is text extracted from a web page describing an antenna.\n"
+        "Based on the description, generate a complete NEC2 input file that "
+        "models this antenna as accurately as possible.\n\n"
+        "IMPORTANT: Look for dimensional tables or text giving element lengths "
+        "and spacings. Convert all dimensions to metres. Place elements at "
+        "physically correct 3-D coordinates — do NOT stack all wires at the "
+        "origin.\n\n"
+        f"Source URL: {url}\n\n"
+        f"--- WEB PAGE TEXT ---\n{url_text}\n--- END ---\n"
+    )
+    if extra_instructions.strip():
+        user_msg += f"\nAdditional instructions: {extra_instructions.strip()}\n"
+
+    if antenna_type:
+        from .nec_calculators import calc_for_type
+
+        calc = calc_for_type(antenna_type, 14.0)  # default freq, will be overridden by page data
+        if calc is not None:
+            user_msg += (
+                f"\n--- COMPUTED REFERENCE DIMENSIONS for {antenna_type} ---\n"
+                f"{calc.summary()}\n"
+                "--- END DIMENSIONS ---\n"
+            )
+
+        type_ctx = _load_type_context(antenna_type)
+        if type_ctx:
+            user_msg += (
+                f"\n--- REFERENCE for {antenna_type} antennas ---\n"
+                f"{type_ctx}\n--- END REFERENCE ---\n"
+            )
+
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_msg},
+    ]
+
+    result = _generate_and_refine(
+        messages,
+        target_type=antenna_type or None,
+        model=model,
+    )
+    result["url"] = url
+    result["url_text"] = url_text[:4000]
     result["model"] = model
     return result
 

@@ -1,0 +1,18 @@
+[
+  {
+    "test": "G3TXQ Hexbeam (karinya.net)",
+    "status": "ok",
+    "type": "hexbeam",
+    "confidence": 0.8,
+    "iterations": 3,
+    "elapsed": 27.8
+  },
+  {
+    "test": "ARRL Moxon Rectangle",
+    "status": "ok",
+    "type": "moxon",
+    "confidence": 0.8,
+    "iterations": 3,
+    "elapsed": 22.4
+  }
+]

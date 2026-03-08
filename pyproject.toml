@@ -19,6 +19,7 @@ dashboard = [
     "psycopg2-binary>=2.9",
     "openai>=1.30",
     "pdfplumber>=0.11",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.scripts]

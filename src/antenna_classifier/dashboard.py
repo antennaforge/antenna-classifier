@@ -586,6 +586,84 @@ def create_app(
                 row[k] = row[k].isoformat()
         return JSONResponse(row, status_code=201)
 
+    @app.post("/api/my-antennas/from-url")
+    async def generate_from_url(request: "Request"):
+        """Fetch a web page, extract antenna data, generate NEC via AI, save to Postgres."""
+        hf_user = _get_hf_user(request)
+        if not hf_user:
+            raise HTTPException(401, "Authentication required")
+        if not hf_user["ai_enabled"]:
+            raise HTTPException(403, "AI features not enabled for your account. Contact admin.")
+        from .nec_generator import generate_nec_from_url
+
+        body = await request.json()
+        url = body.get("url", "").strip()
+        if not url:
+            raise HTTPException(400, "URL is required")
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "Only http:// and https:// URLs are supported")
+
+        name = body.get("name", "").strip() or "URL Import"
+        extra = body.get("description", "").strip()
+        hint_type = body.get("antenna_type", "").strip()
+
+        try:
+            result = generate_nec_from_url(url, extra_instructions=extra,
+                                           antenna_type=hint_type)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            raise HTTPException(500, f"AI generation failed: {exc}")
+
+        nec_content = result["nec_content"]
+
+        antenna_type = result.get("classified_type", "")
+        band = None
+        freq = None
+        try:
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".nec", dir=str(_user_nec_dir), delete=False, mode="w",
+            )
+            tmp.write(nec_content)
+            tmp.close()
+            parsed = parser.parse_file(Path(tmp.name))
+            cls = classifier.classify(parsed)
+            if not antenna_type:
+                antenna_type = cls.antenna_type
+            band = cls.band
+            freq = cls.frequency_mhz
+        except Exception:
+            antenna_type = antenna_type or "unknown"
+
+        row = create_antenna(
+            name=name,
+            description=extra or url,
+            antenna_type=antenna_type,
+            frequency_mhz=freq,
+            band=band,
+            nec_content=nec_content,
+            source="url",
+            metadata={
+                "model": result.get("model"),
+                "usage": result.get("usage"),
+                "url": url,
+                "url_text_preview": result.get("url_text", "")[:500],
+                "iterations": result.get("iterations"),
+                "classified_type": result.get("classified_type"),
+                "confidence": result.get("confidence"),
+                "refinement_log": result.get("refinement_log"),
+                "goal_verdict": result.get("goal_verdict"),
+                "buildability": result.get("buildability"),
+            },
+            owner_user_id=hf_user["user_id"],
+        )
+        for k in ("created_at", "updated_at"):
+            if hasattr(row.get(k), "isoformat"):
+                row[k] = row[k].isoformat()
+        return JSONResponse(row, status_code=201)
+
     return app
 
 
