@@ -1,0 +1,32 @@
+Collinear Antenna — NEC Modeling Reference
+
+Structure: Two or more half-wave elements stacked end-to-end vertically (or
+horizontally), connected by phasing stubs. Provides gain over a single dipole
+by extending the current distribution.
+
+Key rules:
+- Each half-wave section is a GW card.
+- Phasing sections (folded stubs) connect adjacent half-waves.
+- Stubs are modelled as short vertical GW pairs with a connecting wire.
+- Feed at the centre of the assembly.
+- Elements are collinear (aligned along the same axis).
+- Use GE 1 with GN for ground models.
+
+Example — 1λ collinear for 20 m (14.05 MHz), height 20.5m:
+CM 1-lambda collinear antenna
+CE
+GW 1 20  0 -10.496 20.5  0  -0.1 20.5   0.001
+GW 2 20  0   0.1   20.5  0  10.496 20.5  0.001
+GW 3 11  0  -0.1   15.272  0  -0.1 20.5  0.001
+GW 4 11  0   0.1   15.272  0   0.1 20.5  0.001
+GW 5 1   0  -0.1   15.272  0   0.1 15.272 0.001
+GE 1
+EX 0 1 10 0 1.0 0.0
+GN 2 0 0 0 30 0.001
+FR 0 1 0 0 14.05 1
+EN
+
+Note: GW 1 and GW 2 are the two horizontal half-wave sections at Z=20.5m,
+extending in opposite Y directions. GW 3-5 form a phasing stub below
+(vertical wires GW 3/4 from Z=15.27 to Z=20.5, connected by GW 5).
+Feed at centre of the top radiator section.

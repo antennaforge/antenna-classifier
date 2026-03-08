@@ -1,0 +1,35 @@
+Full-Wave Loop Antenna — NEC Modeling Reference
+
+Structure: Closed wire loop, circumference ≈ 1λ. Can be circular, square, or
+rectangular. Oriented vertically or horizontally. Feed at one side.
+
+Key rules:
+- Use multiple GW cards to approximate the loop shape (4 sides for square, 12+ for circular).
+- Wire endpoints must connect: end of each GW = start of next, last connects to first.
+- For circular loops, use angular segments (e.g. 12 wires at 30° increments).
+- Total wire length ≈ 300/f(MHz) metres.
+- Feed at the bottom or one side.
+
+Example — Vertical circular loop for 20 m (14.05 MHz), radius ≈ 3.56 m:
+CM Vert Loop 20m
+CE
+GW 1  3 0 0.921 23.453 0 1.782 22.907 .001
+GW 2  3 0 1.782 22.907 0 2.520 22.120 .001
+GW 3  3 0 2.520 22.120 0 3.075 21.158 .001
+GW 4  3 0 3.075 21.158 0 3.402 20.098 .001
+GW 5  3 0 3.402 20.098 0 3.475 19.023 .001
+GW 6  3 0 3.475 19.023 0 3.293 17.976 .001
+GW 7  3 0 3.293 17.976 0 2.870 17.033 .001
+GW 8  3 0 2.870 17.033 0 2.249 16.269 .001
+GW 9  3 0 2.249 16.269 0 1.483 15.741 .001
+GW 10 3 0 1.483 15.741 0 0.640 15.479 .001
+GW 11 3 0 0.640 15.479 0 -0.213 15.498 .001
+GW 12 3 0 -0.213 15.498 0 0.921 23.453 .001
+GE 0
+EX 0 6 2 0 1.0 0.0
+FR 0 1 0 0 14.05 1
+EN
+
+Note: 12 GW cards form a closed circle in the Y-Z plane at X=0. The loop
+is centred at ~20m height. Feed on wire 6 (bottom of loop).
+For a square loop, use 4 GW cards forming a closed rectangle.

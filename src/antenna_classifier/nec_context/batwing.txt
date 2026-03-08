@@ -1,0 +1,37 @@
+Batwing (Superturnstile) Antenna — NEC Modeling Reference
+
+Structure: Broadband VHF antenna using flat, bow-tie shaped elements arranged
+around a vertical mast. Produces omnidirectional horizontally polarised radiation.
+Often used for FM broadcasting.
+
+Key rules:
+- Each batwing panel is a diamond/bow-tie shape made of GW wires.
+- Multiple panels (2 or 4) arranged symmetrically around a central mast.
+- Panels are in vertical planes, extending outward from the mast.
+- Feed at the centre of each panel, all in phase for omni pattern.
+- Panel height ≈ λ/2, panel width ≈ λ/4.
+- Central mast can be modelled as a vertical GW wire.
+
+Example — 2-panel batwing for 100 MHz:
+CM Batwing antenna for FM broadcast
+CE
+GW 1 11   0.75  0.0  8.5    0.0   0.0  10.0   0.005
+GW 2 11   0.0   0.0  10.0   0.75  0.0  11.5   0.005
+GW 3 11   0.75  0.0  11.5   0.0   0.0  10.0   0.005
+GW 4 11   0.0   0.0  10.0   0.75  0.0  8.5    0.005
+GW 5 11  -0.75  0.0  8.5    0.0   0.0  10.0   0.005
+GW 6 11   0.0   0.0  10.0  -0.75  0.0  11.5   0.005
+GW 7 11  -0.75  0.0  11.5   0.0   0.0  10.0   0.005
+GW 8 11   0.0   0.0  10.0  -0.75  0.0  8.5    0.005
+GE 0
+EX 0 1 6 0 1.0 0.0
+EX 0 5 6 0 1.0 0.0
+GN -1
+FR 0 1 0 0 100.0
+RP 0 37 73 1000 0 0 5 5
+EN
+
+Note: GW 1-4 form one bow-tie panel. GW 5-8 form the opposite panel.
+Both panels meet at the mast centre (0,0,10). Each panel is a diamond in
+the X-Z plane. Feed at the centre of each panel. For 4-panel: add panels
+in the Y-Z plane as well.

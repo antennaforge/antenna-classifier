@@ -1,0 +1,36 @@
+Quad Antenna — NEC Modeling Reference
+
+Structure: Square or diamond-shaped full-wave loops used as beam elements.
+Multiple loops (reflector, driven, directors) spaced along boom axis.
+Each loop has circumference ≈ 1λ (slightly more for reflector, less for directors).
+
+Key rules:
+- Each quad element is a closed square loop using 4 GW cards.
+- Loops are oriented in the Y-Z plane, spaced apart along X (boom axis).
+- Wire endpoints must connect to form a closed loop per element.
+- Reflector loop: slightly larger. Director loops: slightly smaller.
+- Feed at the bottom centre of the driven element.
+- Use GE 0 with GN -1 for free-space models.
+
+Example — 4-element quad at 145 MHz:
+CM 4 ELE QUAD .65 W/L BOOM
+CE
+GW 1 7 -16.29 0 -21.93  -16.29 21.93 0  0.002
+GW 2 7 -16.29 21.93 0   -16.29 0 21.93  0.002
+GW 3 7  0 0 -20.99       0 20.99 0      0.002
+GW 4 7  0 20.99 0        0 0 20.99      0.002
+GW 5 7  21.37 0 -20.58   21.37 20.58 0  0.002
+GW 6 7  21.37 20.58 0    21.37 0 20.58  0.002
+GW 7 7  37.42 0 -20.61   37.42 20.61 0  0.002
+GW 8 7  37.42 20.61 0    37.42 0 20.61  0.002
+GX 14 010
+GS 0 0 0.0254
+GE 0
+EX 0 3 1 00 1.0 0.0
+GN -1
+FR 0 1 0 0 145
+EN
+
+Note: Each pair of GW cards forms half a diamond loop. GX mirrors in the XZ
+plane to complete the loops. Reflector at X=-16.29", driven at X=0, directors
+at X=21.37" and X=37.42". GS converts inches to metres.

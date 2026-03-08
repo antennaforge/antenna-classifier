@@ -1,0 +1,34 @@
+Vertical Antenna — NEC Modeling Reference
+
+Structure: Vertical wire rising along Z-axis, usually with radials.
+- Quarter-wave vertical: length ≈ 71.6/f(MHz) metres.
+- Radials slope down from the base or lie along the ground.
+
+Key rules:
+- Vertical element: one GW from (0,0,base_z) to (0,0,top_z).
+- Radials: separate GW cards extending outward in X/Y from the base, sloping down.
+- Feed at the bottom of the vertical (segment 1 or last segment at base).
+- GE 1 with GN 1 (perfect ground) or GN 2 (real ground).
+- Use GS for unit conversion if dimensions given in feet/inches.
+
+Example — 40 m ground-plane vertical with sloping radials:
+CM 40-meter Groundplane with Sloping Radials
+CE
+GW 1 2  0 0 30    0 0 40     0.054
+GW 2 2  0 0 40    0 0 49.5   0.041
+GW 3 2  0 0 49.5  0 0 58     0.033
+GW 4 1  0 0 58    0 0 63.65  0.027
+GW 5 8  0 0 30   -23 0 7     0.002
+GW 6 8  0 0 30    23 0 7     0.002
+GW 7 8  0 0 30    0 -23 7    0.002
+GW 8 8  0 0 30    0  23 7    0.002
+GS 0 0 0.3048
+GE 0
+EX 0 1 1 00 1.0 0.0
+GN -1
+FR 0 1 0 0 7.15
+EN
+
+Note: Vertical rises along Z (GW 1-4 at X=0,Y=0). Radials (GW 5-8) extend
+outward from the base at Z=30ft, sloping down to Z=7ft. GS scales feet→metres.
+For stepped-diameter verticals, use multiple GW with different radii.

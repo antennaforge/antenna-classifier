@@ -1,0 +1,46 @@
+Hexbeam Antenna — NEC Modeling Reference
+
+Structure: Broadband directional antenna using bent wire elements arranged in a
+hexagonal frame. Typically 2 or 3 elements (driver + reflector + optional director)
+with wires following hexagonal paths in the horizontal plane.
+
+Key rules:
+- Elements are horizontal, arranged in a flat hexagonal pattern at a fixed Z height.
+- Each element uses 6 GW cards tracing the hex perimeter at its Z plane.
+- Driver at Z=0, director above (Z>0), reflector below (Z<0).
+- All GW share the same tag number per element for easy identification.
+- Hex radius ≈ 0.236λ (e.g. ~4.92m for 20m band).
+- Feed at the centre of one driver wire segment.
+
+Example — 3-element hexbeam for 20 m (14.1 MHz):
+CM 3-Element Hex-Beam for 20 m
+CM Hex diameter = 9.848 m, radius = 4.924 m
+CE
+GW 1 21  4.264  2.462  0      0.000  4.924  0     0.000815
+GW 1 21  0.000  4.924  0     -4.264  2.462  0     0.000815
+GW 1 21 -4.264  2.462  0     -4.264 -2.462  0     0.000815
+GW 1 21 -4.264 -2.462  0      0.000 -4.924  0     0.000815
+GW 1 21  0.000 -4.924  0      4.264 -2.462  0     0.000815
+GW 1 21  4.264 -2.462  0      4.264  2.462  0     0.000815
+GW 2 21  4.264  2.462  2.722  0.000  4.924  2.722 0.000815
+GW 2 21  0.000  4.924  2.722 -4.264  2.462  2.722 0.000815
+GW 2 21 -4.264  2.462  2.722 -4.264 -2.462  2.722 0.000815
+GW 2 21 -4.264 -2.462  2.722  0.000 -4.924  2.722 0.000815
+GW 2 21  0.000 -4.924  2.722  4.264 -2.462  2.722 0.000815
+GW 2 21  4.264 -2.462  2.722  4.264  2.462  2.722 0.000815
+GW 3 21  4.264  2.462 -2.253  0.000  4.924 -2.253 0.000815
+GW 3 21  0.000  4.924 -2.253 -4.264  2.462 -2.253 0.000815
+GW 3 21 -4.264  2.462 -2.253 -4.264 -2.462 -2.253 0.000815
+GW 3 21 -4.264 -2.462 -2.253  0.000 -4.924 -2.253 0.000815
+GW 3 21  0.000 -4.924 -2.253  4.264 -2.462 -2.253 0.000815
+GW 3 21  4.264 -2.462 -2.253  4.264  2.462 -2.253 0.000815
+GE 0
+GN -1
+FR 0 1 0 0 14.1 0
+LD 5 1 0 0 5.8e7
+EX 0 1 11 0 1.0 0
+RP 0 37 73 1000 0 5 5
+EN
+
+Note: Driver (tag 1) at Z=0, director (tag 2) at Z=+2.72m, reflector (tag 3)
+at Z=-2.25m. Each element is 6 GW cards forming a hexagon in the X-Y plane.

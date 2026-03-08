@@ -1,0 +1,43 @@
+Discone Antenna — NEC Modeling Reference
+
+Structure: Broadband antenna with a disc (or set of radial wires) on top and a
+cone (or set of sloping wires) below. Provides very wide bandwidth (up to 10:1).
+The disc and cone meet at a central gap where the feed is located.
+
+Key rules:
+- Central feed wire: short GW between disc and cone apex.
+- Upper cone wires: multiple GW radiating upward and outward from the top of feed.
+- Lower cone wires: multiple GW radiating downward and outward from bottom of feed.
+- Use at least 8 wires per cone for reasonable pattern symmetry.
+- Wires are distributed around the azimuth (0°, 45°, 90°, etc.).
+- Feed at the central connecting wire.
+- Cone angle ≈ 25-40° from vertical.
+
+Example — Biconical antenna at 50 MHz:
+CM Biconical antenna, cone angle 30 deg
+CE
+GW 1  1   0.000 -0.025  0.000   0.000  0.025  0.000  .003
+GW 2  20  0.000  0.025  0.000   0.300  0.545  0.000  .003
+GW 3  20  0.000  0.025  0.000  -0.300  0.545  0.000  .003
+GW 4  20  0.000  0.025  0.000   0.000  0.545 -0.300  .003
+GW 5  20  0.000  0.025  0.000   0.000  0.545  0.300  .003
+GW 6  20  0.000  0.025  0.000   0.212  0.545  0.212  .003
+GW 7  20  0.000  0.025  0.000  -0.212  0.545 -0.212  .003
+GW 8  20  0.000  0.025  0.000   0.212  0.545 -0.212  .003
+GW 9  20  0.000  0.025  0.000  -0.212  0.545  0.212  .003
+GW 10 20 -0.300 -0.545  0.000   0.000 -0.025  0.000  .003
+GW 11 20  0.300 -0.545  0.000   0.000 -0.025  0.000  .003
+GW 12 20  0.000 -0.545  0.300   0.000 -0.025  0.000  .003
+GW 13 20  0.000 -0.545 -0.300   0.000 -0.025  0.000  .003
+GW 14 20 -0.212 -0.545 -0.212   0.000 -0.025  0.000  .003
+GW 15 20  0.212 -0.545  0.212   0.000 -0.025  0.000  .003
+GW 16 20 -0.212 -0.545  0.212   0.000 -0.025  0.000  .003
+GW 17 20  0.212 -0.545 -0.212   0.000 -0.025  0.000  .003
+GE 0
+EX 0 1 1 00 1.0 0.0
+FR 0 0 0 0 50
+EN
+
+Note: GW 1 is the central feed wire. GW 2-9 form the upper cone (8 wires
+radiating outward/upward). GW 10-17 form the lower cone (8 wires radiating
+outward/downward). Wires spread at 45° intervals around the azimuth.

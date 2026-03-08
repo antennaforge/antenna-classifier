@@ -1,0 +1,42 @@
+Wire Array (Sterba Curtain, Lazy-H, etc.) — NEC Modeling Reference
+
+Structure: Multiple half-wave wire sections arranged in a repeating pattern,
+connected by phasing stubs or half-wave connecting wires. Provides gain over
+a single dipole through stacking and phasing.
+
+Key rules:
+- Multiple GW cards forming a repeating pattern of horizontal and vertical wires.
+- Wires connect end-to-end to form a continuous phased structure.
+- Horizontal sections are the radiating elements.
+- Vertical or folded sections provide phasing between elements.
+- Feed at one end or at a strategic centre point.
+- Use GE 0 with GN -1 for free-space models.
+
+Example — Sterba curtain at 299.8 MHz:
+CM Sterba Curtain
+CE
+GW 1  5   0   0   -.75   0   0   -.5    .001
+GW 2  11  0   0   -.5    0   .5  -.5    .001
+GW 3  11  0   .5  -.5    0   .5   0     .001
+GW 4  11  0   0    0     0   .5   0     .001
+GW 5  11  0   0    0     0   0    .5    .001
+GW 6  11  0   0    .5    0   .5   .5    .001
+GW 7  5   0   .5   .5    0   .5   .75   .001
+GW 8  11  0   0   -.75   .02 .5  -.75   .001
+GW 9  5   .02 .5  -.75   .02 .5  -.5    .001
+GW 10 11  .02 0   -.5    .02 .5  -.5    .001
+GW 11 11  .02 0   -.5    .02 0    0     .001
+GW 12 11  .02 0    0     .02 .5   0     .001
+GW 13 11  .02 .5   0     .02 .5   .5    .001
+GW 14 11  .02 0    .5    .02 .5   .5    .001
+GW 15 5   .02 0    .5    .02 0    .75   .001
+GW 16 11  .02 0    .75   0   .5   .75   .001
+GE 0
+EX 0 1 1 00 1.0 0.0
+GN -1
+FR 0 1 0 0 299.8
+EN
+
+Note: Wire array is a continuous path of interconnected horizontal and vertical
+sections. Two columns (X=0 and X=0.02) with connecting top/bottom wires.
+Dimensions in wavelengths. Feed at one end (GW 1, seg 1).

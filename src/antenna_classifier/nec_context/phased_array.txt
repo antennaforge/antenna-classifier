@@ -1,0 +1,33 @@
+Phased Array Antenna — NEC Modeling Reference
+
+Structure: Two or more identical vertical or horizontal elements, spaced apart,
+fed with controlled phase differences to steer the beam pattern.
+
+Key rules:
+- Each element is a separate GW card with a unique tag.
+- Elements are spaced apart in one horizontal axis (Y or X), typically λ/4.
+- Each element gets its own EX card with appropriate phase.
+  For cardioid pattern: feed element 1 with 0° and element 2 with 90° phase.
+  Use EX real/imag: (1, 0) for 0° and (0, 1) for 90°.
+- For verticals over ground: GE 1 with GN 1 (perfect) or GN 2 (real).
+- Use LD 5 for wire conductivity.
+
+Example — 2-element phased verticals for 40 m (7.15 MHz):
+CM 40-m phased vertical array
+CE
+GW 1,33,0.,-10.668,10.028,0.,-10.668,0.,.0254
+GW 2,33,0., 10.668,10.028,0., 10.668,0.,.0254
+GE 1
+LD 5,1,0,0, 5.7471E+7,1.
+LD 5,2,0,0, 5.7471E+7,1.
+FR 0,1,0,0,7.15
+GN 1
+EX 0,1,33,0,1.414214,0.
+EX 0,2,33,0,1.414214,0.
+RP 0,1,361,1000,90.,0.,0.,1.,0.
+EN
+
+Note: Two verticals (GW 1, GW 2) spaced ≈21m apart along Y-axis (±10.668m).
+Each runs from ground (Z=0) to Z=10.028m. Both fed at base (segment 33).
+Equal-amplitude feed produces a broadside pattern; vary phase for steering.
+For endfire: feed one element at 0° (1,0) and other at 90° (0,1).

@@ -1,0 +1,34 @@
+Beverage Antenna — NEC Modeling Reference
+
+Structure: Very long horizontal wire close to the ground, terminated at the far
+end with a resistive load. Used for receiving on low frequencies (80m, 160m).
+Length is typically 1-4λ or more.
+
+Key rules:
+- Main wire: long horizontal GW at a fixed low height (1-3m / 6-10ft).
+- Down-lead at feed end: vertical GW from ground to wire height.
+- Termination: LD card (resistive load) at the far end of the wire.
+- Optional "right-angle" configuration with perpendicular wire sections.
+- Feed at the base of the down-lead.
+- GE 1 with GN 2 for real ground (ground characteristics matter).
+- Use GS for unit conversion if dimensions in feet.
+
+Example — Beverage for 80 m (3.8 MHz), 600 ft long:
+CM Beverage, right-angle terminated, 80 meters
+CE
+GW 1 1   0    0 0     0    0 6    0.001
+GW 2 40  0    0 6   600    0 6    0.001
+GW 3 10  600  0 6   600   65 6    0.001
+GW 4 10  600  0 6   600  -65 6    0.001
+GS 0 0 0.3048
+GE 1
+EX 0 1 1 00 1.0 0.0
+LD 1 2 40 0 450 0 0
+GN 2 0 0 0 13 .005
+FR 0 1 0 0 3.8
+EN
+
+Note: GW 1 is the vertical down-lead from ground to Z=6ft. GW 2 is the main
+horizontal wire (600ft along X at Z=6ft). GW 3-4 are right-angle termination
+arms. LD terminates the main wire at its far end (seg 40) with 450 Ω.
+GS converts feet to metres. Feed at base of down-lead (GW 1, seg 1).

@@ -1,0 +1,35 @@
+Rhombic Antenna — NEC Modeling Reference
+
+Structure: Four long wires forming a diamond (rhombus) shape, elevated above
+ground. Terminated at the far end with a resistive load. Produces high gain
+and very wide bandwidth on HF.
+
+Key rules:
+- Four GW cards forming a diamond in the horizontal plane at a fixed Z height.
+- Feed at one vertex (apex), termination load at the opposite vertex.
+- Leg length is typically 2-10λ.
+- Apex half-angle typically 30-80° depending on design frequency.
+- Termination resistor modelled with LD 0 card on the far-end wire.
+- Dual feed: two EX cards at the feed vertex (one per wire meeting there),
+  with opposite polarity.
+- GE 1 with GN 1 for perfect ground.
+
+Example — Rhombic for 30 MHz, height 10m:
+CM Rhombic antenna
+CE
+GW 1 20  0.00  0.00 10.0  17.30  10.00 10.0  0.01
+GW 2 20  0.00  0.00 10.0  17.30 -10.00 10.0  0.01
+GW 3 20 17.30  10.00 10.0  34.60  0.00 10.0  0.01
+GW 4 20 17.30 -10.00 10.0  34.60  0.00 10.0  0.01
+GE 1
+GN 1
+FR 0 1 0 0 30.0
+EX 0 1 1  0  1.0  0.0
+EX 0 2 1  0 -1.0  0.0
+LD 0 3 20 0 290 0 0
+LD 0 4 20 0 290 0 0
+EN
+
+Note: Feed vertex at origin (0,0,10). Wires diverge to (17.3,±10,10), then
+converge to far vertex at (34.6,0,10). Termination loads (LD 0, 290 Ω) on
+the last segments of GW 3 and GW 4. All wires at Z=10m height.

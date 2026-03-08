@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import os
+import pathlib
 import re
 from typing import Any
 
@@ -111,6 +112,25 @@ def _get_client():
 
 
 # ---------------------------------------------------------------------------
+# Per-type NEC context documents
+# ---------------------------------------------------------------------------
+
+_NEC_CONTEXT_DIR = pathlib.Path(__file__).parent / "nec_context"
+
+
+def _load_type_context(antenna_type: str) -> str:
+    """Load the NEC modelling reference for *antenna_type*, if available.
+
+    Returns the file contents as a string, or an empty string if no
+    context document exists for the requested type.
+    """
+    path = _NEC_CONTEXT_DIR / f"{antenna_type}.txt"
+    if path.is_file():
+        return path.read_text()
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # PDF text extraction
 # ---------------------------------------------------------------------------
 
@@ -187,6 +207,13 @@ def generate_nec_from_form(
     if description.strip():
         user_msg += f"\nAdditional details:\n{description.strip()}\n"
 
+    type_ctx = _load_type_context(antenna_type)
+    if type_ctx:
+        user_msg += (
+            f"\n--- REFERENCE for {antenna_type} antennas ---\n"
+            f"{type_ctx}\n--- END REFERENCE ---\n"
+        )
+
     client = _get_client()
     resp = client.chat.completions.create(
         model=model,
@@ -220,6 +247,7 @@ def generate_nec_from_pdf(
     *,
     model: str = "gpt-5.2",
     extra_instructions: str = "",
+    antenna_type: str = "",
 ) -> dict[str, Any]:
     """Extract text from a PDF and ask the model to produce a NEC file.
 
@@ -241,6 +269,14 @@ def generate_nec_from_pdf(
     )
     if extra_instructions.strip():
         user_msg += f"\nAdditional instructions: {extra_instructions.strip()}\n"
+
+    if antenna_type:
+        type_ctx = _load_type_context(antenna_type)
+        if type_ctx:
+            user_msg += (
+                f"\n--- REFERENCE for {antenna_type} antennas ---\n"
+                f"{type_ctx}\n--- END REFERENCE ---\n"
+            )
 
     client = _get_client()
     resp = client.chat.completions.create(

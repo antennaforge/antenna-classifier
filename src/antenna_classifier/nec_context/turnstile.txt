@@ -1,0 +1,31 @@
+Turnstile Antenna — NEC Modeling Reference
+
+Structure: Two dipoles crossed at 90° and fed 90° out of phase to produce
+circular polarisation. Can be stacked for gain (stacked turnstile).
+
+Key rules:
+- Two horizontal dipole GW cards, perpendicular to each other, at the same height.
+- Dipole 1 extends along X, dipole 2 extends along Y, both at the same Z.
+- Feed both dipoles at their centres with 90° phase difference:
+  EX on dipole 1: (1.0, 0.0) → 0° phase
+  EX on dipole 2: (0.0, 1.0) → 90° phase
+- Each dipole is ≈ λ/2 long.
+- For stacking: repeat the pair at λ/2 vertical spacing.
+
+Example — Turnstile for 146 MHz at 10m height:
+CM Crossed dipole turnstile for 2m
+CE
+GW 1 21 -0.51 0.0 10.0  0.51 0.0 10.0  0.001
+GW 2 21  0.0 -0.51 10.0  0.0 0.51 10.0  0.001
+GE 0
+EX 0 1 11 0 1.0 0.0
+EX 0 2 11 0 0.0 1.0
+GN -1
+FR 0 1 0 0 146.0
+RP 0 37 73 1000 0 0 5 5
+EN
+
+Note: GW 1 along X-axis, GW 2 along Y-axis, both at Z=10m height.
+Fed at centre segments (seg 11 of each). Phase quadrature: EX on GW 1 is
+(1,0) and on GW 2 is (0,1) — producing right-hand circular polarisation.
+For left-hand circular: use (0,-1) on GW 2.

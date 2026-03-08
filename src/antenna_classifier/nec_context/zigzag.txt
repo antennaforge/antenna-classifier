@@ -1,0 +1,37 @@
+Zigzag Antenna — NEC Modeling Reference
+
+Structure: Wire antenna with alternating zigzag bends, providing compact size
+and broadband characteristics. The zigzag pattern shortens the overall span
+while maintaining electrical length.
+
+Key rules:
+- Multiple GW cards tracing a zigzag path in one plane.
+- Wire endpoints connect sequentially.
+- Zigzag wire is longer than the direct distance — acts as a loaded antenna.
+- Feed at the centre or at one end depending on the design.
+- Can be oriented vertically or horizontally.
+- Use LD 5 for wire conductivity.
+
+Example — Zigzag dipole for 14 MHz at 10m height:
+CM Zigzag dipole, 20m band
+CE
+GW 1  5  -4.0   0.0  10.0  -3.0   0.5  10.0  0.001
+GW 2  5  -3.0   0.5  10.0  -2.0   0.0  10.0  0.001
+GW 3  5  -2.0   0.0  10.0  -1.0   0.5  10.0  0.001
+GW 4  5  -1.0   0.5  10.0   0.0   0.0  10.0  0.001
+GW 5  5   0.0   0.0  10.0   1.0   0.5  10.0  0.001
+GW 6  5   1.0   0.5  10.0   2.0   0.0  10.0  0.001
+GW 7  5   2.0   0.0  10.0   3.0   0.5  10.0  0.001
+GW 8  5   3.0   0.5  10.0   4.0   0.0  10.0  0.001
+GE 0
+EX 0 4 5 0 1.0 0.0
+GN -1
+LD 5 0 0 0 5.8e7
+FR 0 1 0 0 14.0
+RP 0 37 73 1000 0 0 5 5
+EN
+
+Note: 8 GW cards zigzag in the X-Y plane at Z=10m. Wire alternates between
+Y=0 and Y=0.5 while progressing along X from -4 to +4. Total wire length
+is longer than the 8m span, providing electrical loading.
+Feed at the centre (GW 4/5 junction).

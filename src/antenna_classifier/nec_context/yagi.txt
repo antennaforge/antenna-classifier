@@ -1,0 +1,35 @@
+Yagi-Uda Beam Antenna — NEC Modeling Reference
+
+Structure: Parallel horizontal elements spaced along a boom axis.
+- Reflector: ~5% longer than driven element, behind it.
+- Driven element: resonant at design frequency (~λ/2).
+- Directors: progressively shorter, in front of driven element.
+Elements are horizontal (extend along Y at fixed Z height), spaced along X.
+
+Key rules:
+- Each element is one GW card, all at the same Z height.
+- Elements MUST be at different X positions (boom spacing).
+- Feed the driven element at its centre segment.
+- Use LD 5 for wire conductivity (aluminium or copper).
+- Free-space or real-ground models both valid.
+
+Example — 3-element Yagi for 20 m (14.175 MHz):
+CM 3 el Yagi 20 M: short
+CE
+GW 1,21,-5.409512,0.,0.,5.409512,0.,0.,.0127
+GW 2,21,-4.948156,1.838476,0.,4.948156,1.838476,0.,.0127
+GW 3,21,-4.720952,4.59619,0.,4.720952,4.59619,0.,.0127
+GE 0
+LD 4,2,11,11,0.,27.08975
+LD 5,1,0,0,2.5E+07,1.
+LD 5,2,0,0,2.5E+07,1.
+LD 5,3,0,0,2.5E+07,1.
+FR 0,1,0,0,14.175
+GN -1
+EX 0,2,11,0,1.414214,0.
+RP 0,1,361,1000,90.,0.,0.,1.,0.
+EN
+
+Note: Reflector (GW 1) is at Y=0, driven (GW 2) at Y=1.84m, director (GW 3) at Y=4.60m.
+Elements extend along X, spaced apart in Y. All at Z=0 (free-space model).
+For ground-mounted models, raise all elements to the same Z height above ground.

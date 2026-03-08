@@ -1,0 +1,33 @@
+Inverted-V Antenna — NEC Modeling Reference
+
+Structure: Dipole with ends drooping downward from a central support.
+The apex is at the top (support height) and wire ends slope down at 30-45°.
+Often multiband with separate wire pairs for each band.
+
+Key rules:
+- Apex (feed point) at the top: X=0, Y=0, Z=apex_height.
+- Wire ends droop down and outward, ending at a lower Z.
+- Each leg is one GW card from apex to end.
+- For a single-band inverted-V: 2 GW cards (one per leg) + short feed wire.
+- For multiband: separate wire pairs per band, all meeting at apex.
+- Feed at the apex (centre, short connecting wire or junction).
+- GE 1 with GN 2 for real ground models.
+
+Example — 80m/40m inverted-V, apex at 20m:
+CM Inverted V 40m, 80m
+CE
+GW 1 1   -.1  -.1  20.0   .1   .1  20.0  .001
+GW 2 16   0.0 -7.74 13.0  -.1  -.1  20.0  .001
+GW 3 16   .1   .1  20.0   0.0  7.74 13.0  .001
+GW 4 20  -15.94 0   8.0   -.1  -.1  20.0  .001
+GW 5 20   .1   .1  20.0  15.94  0   8.0   .001
+GE 1
+EX 0 1 1 0 1.0 0.0
+GN 2 0 0 0 13 0.005
+FR 0 1 0 0 3.65
+RP 0 181 1 1000 90 0 -1 1
+EN
+
+Note: GW 1 is the short feed wire at the apex (Z=20m). GW 2-3 are 40m band
+legs drooping to Z=13m. GW 4-5 are 80m band legs drooping to Z=8m.
+Each leg pair extends symmetrically from the apex in opposite directions.

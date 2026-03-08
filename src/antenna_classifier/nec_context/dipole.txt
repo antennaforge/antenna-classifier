@@ -1,0 +1,28 @@
+Dipole Antenna — NEC Modeling Reference
+
+Structure: Single horizontal wire, centre-fed, length ≈ λ/2.
+The wire extends along one horizontal axis (X or Y) at a fixed Z height.
+
+Key rules:
+- One GW card (or split into 3 wires: left half, short centre, right half).
+- Feed at the centre segment (centre of wire or centre short wire).
+- Total length ≈ 143/f(MHz) metres for a half-wave dipole.
+- Wire extends symmetrically: from −L/2 to +L/2 along one axis.
+- Z coordinate is the height above ground.
+- Use LD 5 for copper wire conductivity (5.8e7 S/m).
+
+Example — 80 m dipole at 20 m height (3.68 MHz):
+CM Dipole antenna for 80 mtr
+CE
+GW 1 19 -19.65 0.0 20.0 -0.5 0.0 20.0 0.001
+GW 2 1  -0.5   0.0 20.0  0.5 0.0 20.0 0.001
+GW 3 19  0.5   0.0 20.0 19.65 0.0 20.0 0.001
+GE -1
+LD 5 0 0 0 58000000
+GN 2 0 0 0 14 .006
+EX 0 2 1 0 1 0
+FR 0 0 0 0 3.68 0
+EN
+
+Note: Wire extends along X-axis at Z=20m height. Feed on short centre wire (GW 2).
+For free-space: use GE 0 and GN -1. For real ground: use GE -1 or GE 1 with GN 2.

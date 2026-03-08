@@ -1,0 +1,35 @@
+Delta Loop Antenna — NEC Modeling Reference
+
+Structure: Triangular full-wave loop, usually oriented vertically. Three GW
+cards form the triangle sides. Circumference ≈ 1λ. Can be apex-up or apex-down,
+fed at the bottom or at a corner.
+
+Key rules:
+- Three GW cards forming a closed triangle (endpoints connect).
+- Oriented in a vertical plane (e.g. X-Z plane or Y-Z plane).
+- Circumference = sum of wire lengths ≈ 306/f(MHz) metres.
+- Bottom feed for horizontally polarised radiation.
+- Corner feed for vertically polarised radiation.
+- Use GE 1 with GN for ground models, or GE 0 for free-space.
+- Use GS for unit conversion if dimensions in feet.
+
+Example — Right-angle delta loop, bottom-fed, 40 m (7.15 MHz):
+CM Right-angle Delta, bottom-fed, 40 meters, #14 copper
+CE
+GW 1 33  -29.2 0 20.8   0    0 50     2.671e-3
+GW 2 33   0    0 50     29.2  0 20.8   2.671e-3
+GW 3 47  29.2  0 20.8  -29.2  0 20.8   2.671e-3
+GS 0 0 .3048
+GE 1
+GN 0 0 0 0 13 .005
+EX 0 3 24 0 1 0
+LD 5 1 1 33 5.8001e7
+LD 5 2 1 33 5.8001e7
+LD 5 3 1 47 5.8001e7
+FR 0 1 0 0 7.15 1
+EN
+
+Note: Triangle in the X-Z plane. GW 1 goes from lower-left to apex (top).
+GW 2 from apex down to lower-right. GW 3 is the horizontal bottom wire.
+Feed at centre of GW 3 (bottom wire). All dimensions in feet, GS converts.
+Apex at Z=50ft, base at Z=20.8ft.

@@ -1,0 +1,34 @@
+Half-Square Antenna — NEC Modeling Reference
+
+Structure: U-shaped wire with two vertical quarter-wave sections connected at
+the top by a horizontal half-wave section. Provides low-angle bidirectional
+radiation. Fed at the base of one vertical.
+
+Key rules:
+- Two vertical GW cards (quarter-wave each), extending upward from base.
+- One horizontal GW card connecting the tops of the verticals (half-wave).
+- Feed at the base of one vertical.
+- The horizontal wire is the main radiating element.
+- GE 1 with GN for ground models.
+- Use GS for unit conversion if dimensions in inches/feet.
+
+Example — Half-square for 2 m (146 MHz):
+CM Half Square: 2 meters, #12 copper wire
+CE
+GW 1 25  -20.0 0 360.0    -20.0 0 381.55  0.04
+GW 2 49  -20.0 0 381.55    20.0 0 381.55  0.04
+GW 3 25   20.0 0 381.55    20.0 0 360.0   0.04
+GS 0 0 .02540
+GE 1
+GN 2 0 0 0 13 .005
+EX 0 1 25 0 1 0
+LD 5 1 1 25 5.8001E7
+LD 5 2 1 49 5.8001E7
+LD 5 3 1 25 5.8001E7
+FR 0 1 0 0 146 1
+EN
+
+Note: GW 1 is left vertical (Z=360" to Z=381.55"). GW 2 is horizontal top
+wire connecting the two verticals (X=-20" to X=20"). GW 3 is right vertical.
+U-shape opens downward. Dimensions in inches (GS converts to metres).
+Feed at top of GW 1 (base=high segment number because wire goes bottom-up).

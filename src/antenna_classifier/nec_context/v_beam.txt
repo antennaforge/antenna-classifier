@@ -1,0 +1,33 @@
+V-Beam Antenna — NEC Modeling Reference
+
+Structure: Two long wires extending from a central feed point in a V shape.
+The included angle determines the frequency and gain. Similar to a rhombic
+but open at the far end (unterminated).
+
+Key rules:
+- Two long GW cards extending from a central feedpoint at a fixed Z height.
+- The V opens symmetrically about the forward axis.
+- V half-angle is typically 30-70° depending on leg length and frequency.
+- Feed at the apex (junction of the two wires) — use a short connecting wire.
+- GE 1 with GN for ground models.
+- Use LD 5 for copper wire conductivity.
+- Use GS for unit conversion if dimensions in feet.
+
+Example — V-beam for 40 m (7.15 MHz), 171 ft legs, 70° included angle:
+CM Extended arm Vee, 40 meters, #14 copper
+CE
+GW 1 40  -160.95 85.50 40.0  -1 0 40.0  0.032
+GW 2 1   -1      0     40.0   1 0 40.0  0.032
+GW 3 40   1      0     40.0  160.95 85.50 40.0  0.032
+GS 0 0 .3048
+GE 1
+GN 0 0 0 0 13 .005
+EX 0 2 1 0 1 0
+LD 5 0 0 0 5.8001e7
+FR 0 1 0 0 7.15 1
+EN
+
+Note: GW 2 is the short central feed wire. GW 1 and GW 3 are the V legs
+extending symmetrically from the feedpoint. All at Z=40ft height.
+Wires diverge in X and Y from the centre. GS converts feet to metres.
+Feed on the short centre wire (GW 2).

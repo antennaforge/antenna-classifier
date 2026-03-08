@@ -1,0 +1,42 @@
+Patch (Microstrip) Antenna — NEC Modeling Reference
+
+Structure: Flat rectangular or circular conducting patch over a ground plane.
+In NEC, modelled as a grid of wires approximating the patch surface.
+
+Key rules:
+- The patch is approximated by a mesh of horizontal GW wires at a fixed Z height.
+- Ground plane below is modelled with GN card (perfect ground).
+- Patch width and length ≈ λ/2 at the design frequency.
+- Height above ground plane is very small (< 0.05λ).
+- Feed at an offset from centre for impedance matching.
+- Use multiple parallel GW wires to form the patch surface.
+- Wire spacing should be < λ/10 for good results.
+
+Example — Simple wire-grid patch for 1 GHz, 15cm × 15cm:
+CM Wire-grid patch antenna, 1 GHz
+CE
+GW 1  11  -0.075 -0.075 0.005   0.075 -0.075 0.005  0.0005
+GW 2  11  -0.075 -0.050 0.005   0.075 -0.050 0.005  0.0005
+GW 3  11  -0.075 -0.025 0.005   0.075 -0.025 0.005  0.0005
+GW 4  11  -0.075  0.000 0.005   0.075  0.000 0.005  0.0005
+GW 5  11  -0.075  0.025 0.005   0.075  0.025 0.005  0.0005
+GW 6  11  -0.075  0.050 0.005   0.075  0.050 0.005  0.0005
+GW 7  11  -0.075  0.075 0.005   0.075  0.075 0.005  0.0005
+GW 8  11  -0.075 -0.075 0.005  -0.075  0.075 0.005  0.0005
+GW 9  11  -0.050 -0.075 0.005  -0.050  0.075 0.005  0.0005
+GW 10 11  -0.025 -0.075 0.005  -0.025  0.075 0.005  0.0005
+GW 11 11   0.000 -0.075 0.005   0.000  0.075 0.005  0.0005
+GW 12 11   0.025 -0.075 0.005   0.025  0.075 0.005  0.0005
+GW 13 11   0.050 -0.075 0.005   0.050  0.075 0.005  0.0005
+GW 14 11   0.075 -0.075 0.005   0.075  0.075 0.005  0.0005
+GE 1
+GN 1
+EX 0 4 3 0 1.0 0.0
+FR 0 1 0 0 1000.0
+RP 0 37 73 1000 0 0 5 5
+EN
+
+Note: GW 1-7 are horizontal wires along X (spaced 2.5cm in Y). GW 8-14 are
+perpendicular wires along Y (spaced 2.5cm in X). All at Z=5mm above ground.
+Together they form a wire-grid approximation of the patch surface.
+Feed at an offset point (GW 4, seg 3) for impedance match.

@@ -1,0 +1,35 @@
+Quagi Antenna — NEC Modeling Reference
+
+Structure: Hybrid beam combining quad loop elements (driven, reflector) with
+Yagi-style straight-wire directors. Provides the low-angle radiation of a
+quad with the simplicity of Yagi directors.
+
+Key rules:
+- Reflector and driven element: closed square or diamond loops (4 GW each).
+- Directors: straight horizontal wires (1 GW each), like a Yagi.
+- Loops are oriented in Y-Z plane, spaced along X (boom axis).
+- Directors are also spaced along X, extending along Y or Z.
+- Feed at the bottom or side of the driven element loop.
+- Use GE 0 for free-space or GE 1 with GN for ground models.
+
+Example — Quagi for 144 MHz (simplified 3-element):
+CM 3-element Quagi for 2m
+CE
+GW 1 7   0.0 -0.26  -0.26   0.0  0.26 -0.26  0.002
+GW 2 7   0.0  0.26  -0.26   0.0  0.26  0.26  0.002
+GW 3 7   0.0  0.26   0.26   0.0 -0.26  0.26  0.002
+GW 4 7   0.0 -0.26   0.26   0.0 -0.26 -0.26  0.002
+GW 5 7   0.25 -0.24 -0.24   0.25  0.24 -0.24  0.002
+GW 6 7   0.25  0.24 -0.24   0.25  0.24  0.24  0.002
+GW 7 7   0.25  0.24  0.24   0.25 -0.24  0.24  0.002
+GW 8 7   0.25 -0.24  0.24   0.25 -0.24 -0.24  0.002
+GW 9 21  0.60  0.0  -0.22   0.60  0.0   0.22  0.002
+GE 0
+EX 0 1 4 0 1.0 0.0
+GN -1
+FR 0 1 0 0 146.0
+EN
+
+Note: GW 1-4 form the reflector quad loop at X=0. GW 5-8 form the driven
+quad loop at X=0.25m. GW 9 is a straight-wire director at X=0.60m.
+Feed on the driven loop (GW 5, segment near bottom).

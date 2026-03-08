@@ -1,0 +1,34 @@
+Bobtail Curtain Antenna — NEC Modeling Reference
+
+Structure: Three quarter-wave vertical wires connected at the top by two
+half-wave horizontal wires. Fed at the base of the centre vertical.
+Provides bidirectional gain at low angles.
+
+Key rules:
+- Centre vertical: GW from ground up to top.
+- Two outer verticals: GW from near ground up to top, spaced λ/2 apart.
+- Two horizontal top wires: GW connecting centre top to each outer vertical top.
+- Feed at the base of the centre vertical.
+- Outer verticals are slightly elevated above ground (not touching).
+- GE 1 with GN for ground model.
+- Use GS for unit conversion if dimensions in feet.
+
+Example — Bobtail curtain for 40 m (7.685 MHz):
+CM Bobtail Curtain
+CE
+GW 1 5   0   0      0       0   0      31.915  0.002
+GW 2 5   0  -67.092 .1      0  -67.092 31.915  0.002
+GW 3 5   0   67.092 .1      0   67.092 31.915  0.002
+GW 4 11  0   0      31.915  0  -67.092 31.915  0.002
+GW 5 11  0   67.092 31.915  0   0      31.915  0.002
+GS 0 0 0.3048
+GE 1
+EX 0 1 1 00 1.0 0.0
+GN 0 0 0 0 13 .005
+FR 0 1 0 0 7.685
+EN
+
+Note: GW 1 is the centre vertical (Z=0 to Z=31.9ft). GW 2, GW 3 are outer
+verticals at Y=±67ft. GW 4, GW 5 are horizontal top wires connecting centre
+to outers at Z=31.9ft. Feed at base of centre vertical (GW 1, seg 1).
+Dimensions in feet, GS converts to metres.

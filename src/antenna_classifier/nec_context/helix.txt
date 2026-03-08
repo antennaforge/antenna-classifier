@@ -1,0 +1,36 @@
+Helical Antenna — NEC Modeling Reference
+
+Structure: Wire wound in a helix (spiral) along an axis. Axial-mode helices
+produce circular polarisation and high gain. The helix diameter ≈ λ/π,
+spacing between turns ≈ λ/4.
+
+Key rules:
+- Model the helix as many short straight GW segments following the spiral path.
+- Each GW card is a short segment of the helix. Use ~12-20 segments per turn.
+- Coordinates trace a 3D spiral: X = R*cos(θ), Y = R*sin(θ), Z increases linearly.
+- Start with a short straight wire from ground to the helix start (feed point).
+- Feed at the first segment (base of helix).
+- GE 1 with GN for ground-plane models. Include a ground plane or radials.
+- Use GS if dimensions are in inches.
+
+Example — 10-turn helix at 435 MHz (not all wires shown):
+CM Helical Antenna, 10-turn axial-mode, 435 MHz
+CE
+GW 1 1  4.35  0.00  0.00   4.35  0.00  0.50  0.125
+GW 2 3  4.35  0.00  0.50   4.14  1.35  0.67  0.125
+GW 3 3  4.14  1.35  0.67   3.52  2.56  0.83  0.125
+GW 4 3  3.52  2.56  0.83   2.56  3.52  1.00  0.125
+GW 5 3  2.56  3.52  1.00   1.35  4.14  1.17  0.125
+GW 6 3  1.35  4.14  1.17  -0.00  4.35  1.33  0.125
+...
+GS 0 0 0.0254
+GE 1
+EX 0 1 1 00 1.0 0.0
+GN 0 0 0 0 13 .005
+FR 0 1 0 0 435
+EN
+
+Note: Each GW traces a short arc of the helix. X/Y coordinates follow a circle
+of radius 4.35" while Z increases by pitch/segments_per_turn per wire. GS
+converts inches to metres. For N turns with 20 segments/turn: ~20*N GW cards.
+Radius R = D/2 where D ≈ λ/π. Pitch ≈ λ/4 per turn.
