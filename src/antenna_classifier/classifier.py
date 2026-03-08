@@ -111,6 +111,16 @@ def classify(parsed: ParseResult) -> ClassificationResult:
         if result.confidence >= 0.7:
             break
 
+    # Enrich moxon with construction subtype if comment detector got it
+    # but _classify_moxon didn't run (stopped by confidence threshold).
+    if result.antenna_type == "moxon" and not result.subtypes:
+        if ctx.n_wire_groups == 2:
+            result.subtypes.append("wire")
+        elif 3 <= ctx.n_wire_groups <= 4:
+            is_tube, _ = _detect_tube_moxon(ctx)
+            if is_tube:
+                result.subtypes.append("tube")
+
     # If still unknown, check for wire-grid objects (no EX/FR cards)
     if result.antenna_type == "unknown":
         _classify_wire_object(ctx, result)
@@ -496,6 +506,11 @@ def _classify_loop_quad(ctx: _AnalysisContext, result: ClassificationResult) -> 
     """Detect loop and quad antennas by closed-wire topology."""
     if result.confidence >= 0.7:
         return
+    # Don't override a Moxon — Moxon elements have bends that can look
+    # loop-like to the cycle counter, but the defining tip gap means they
+    # are NOT closed loops.
+    if result.antenna_type == "moxon":
+        return
     if ctx.n_wire_groups < 1:
         return
     # Wire-grid mesh models (vehicles, horns, reflectors) have many wires
@@ -643,46 +658,281 @@ def _classify_vertical(ctx: _AnalysisContext, result: ClassificationResult) -> N
             result.evidence.append("vertical excited element (no ground model)")
 
 
+def _free_endpoints(grp: _WireGroup, tol: float = 1e-4) -> list[tuple[float, float, float]]:
+    """Endpoints that appear exactly once in a group (dangling tips)."""
+    all_pts: list[tuple[float, float, float]] = []
+    for w in grp.wires:
+        lp = w.labeled_params
+        coords = [lp.get(k) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
+        if not all(isinstance(v, (int, float)) for v in coords):
+            continue
+        all_pts.append((coords[0], coords[1], coords[2]))
+        all_pts.append((coords[3], coords[4], coords[5]))
+    free: list[tuple[float, float, float]] = []
+    for i, pt in enumerate(all_pts):
+        count = sum(
+            1 for j, other in enumerate(all_pts)
+            if i != j and all(abs(a - b) < tol for a, b in zip(pt, other))
+        )
+        if count == 0:
+            free.append(pt)
+    return free
+
+
+def _find_tip_gaps(groups: list[_WireGroup], tol: float = 1e-4) -> list[float]:
+    """Find the distances between free endpoints across wire groups.
+
+    A "free endpoint" is a wire endpoint that is NOT shared with any
+    other wire in the same group — i.e. it's a dangling tip, not an
+    internal junction.  For a wire Moxon, there are 4 free tips (2 per
+    element) and they approach the opposite element's tips across a
+    small capacitive gap.
+
+    Works for any number of groups >= 2.  Returns the list of
+    inter-group free-endpoint distances, sorted ascending.
+    """
+    if len(groups) < 2:
+        return []
+
+    tips_per_group = [_free_endpoints(g, tol) for g in groups]
+
+    dists: list[float] = []
+    for i in range(len(groups)):
+        for j in range(i + 1, len(groups)):
+            for pa in tips_per_group[i]:
+                for pb in tips_per_group[j]:
+                    d = math.sqrt(sum((a - b) ** 2 for a, b in zip(pa, pb)))
+                    dists.append(d)
+    dists.sort()
+    return dists
+
+
+def _group_has_bends(group: _WireGroup) -> bool:
+    """True if at least one wire in the group is non-collinear with the
+    group's dominant direction (i.e. the element bends)."""
+    d = group.element_direction
+    if d == (0, 0, 0) or len(group.wires) < 2:
+        return False
+    for w in group.wires:
+        lp = w.labeled_params
+        coords = [lp.get(k) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
+        if not all(isinstance(v, (int, float)) for v in coords):
+            continue
+        x1, y1, z1, x2, y2, z2 = coords
+        dx, dy, dz = x2 - x1, y2 - y1, z2 - z1
+        mag = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if mag > 0:
+            dot = abs(d[0] * dx / mag + d[1] * dy / mag + d[2] * dz / mag)
+            if dot < 0.9:
+                return True
+    return False
+
+
+def _detect_tube_moxon(ctx: _AnalysisContext) -> tuple[bool, list[_WireGroup]]:
+    """Detect tube Moxon: driven element split at feedpoint into two
+    mirror-symmetric halves, each forming a closed path.
+
+    Tube Moxons (e.g. Ceecom) model bent aluminium tubes with the driven
+    element split into two halves at the feed gap.  This gives 3 groups:
+    two mirror halves + one reflector.
+
+    Returns (is_tube, logical_elements) where logical_elements merges the
+    mirror halves into a synthetic group for downstream checks.
+    """
+    groups = ctx.wire_groups
+    if not 3 <= len(groups) <= 4:
+        return False, []
+
+    # Find the boom axis by trying each axis.  The mirror-symmetric halves
+    # of the split driven element can have larger centroid spread on the
+    # element axis than on the boom axis, so we can't just pick max spread.
+    # Instead, try each axis and accept the one that gives exactly 2 clusters
+    # (one pair at the same boom position + one singleton for the reflector).
+    centroids = [g.centroid for g in groups]
+
+    best: tuple[int, list[list[int]], float] | None = None  # (axis, clusters, tol)
+    for axis in (0, 1, 2):
+        vals = [c[axis] for c in centroids]
+        spread = max(vals) - min(vals)
+        if spread < 0.01:
+            continue
+        tol = spread * 0.15
+        cls: list[list[int]] = []
+        used = [False] * len(groups)
+        for i in range(len(groups)):
+            if used[i]:
+                continue
+            cl = [i]
+            used[i] = True
+            for j in range(i + 1, len(groups)):
+                if not used[j] and abs(vals[i] - vals[j]) < tol:
+                    cl.append(j)
+                    used[j] = True
+            cls.append(cl)
+        # Accept if exactly 2 clusters with one pair and one singleton
+        if len(cls) == 2:
+            sizes = sorted(len(c) for c in cls)
+            if sizes == [1, 2]:
+                best = (axis, cls, tol)
+                break
+
+    if best is None:
+        return False, []
+
+    boom_axis, clusters, _ = best
+
+    split_cluster = None
+    single_cluster = None
+    for cl in clusters:
+        if len(cl) == 2:
+            split_cluster = cl
+        elif len(cl) == 1:
+            single_cluster = cl
+
+    if split_cluster is None:
+        return False, []
+
+    # Verify the split pair are mirror-symmetric:
+    # - similar wire counts and spans
+    # - opposite on the non-boom, non-vertical axis (the element axis)
+    g_a, g_b = groups[split_cluster[0]], groups[split_cluster[1]]
+    # Wire counts within factor of 2
+    if max(len(g_a.wires), len(g_b.wires)) > 2 * min(len(g_a.wires), len(g_b.wires)):
+        return False, []
+    # Spans similar (within 30%)
+    span_a, span_b = g_a.dominant_span, g_b.dominant_span
+    if span_a > 0 and span_b > 0:
+        ratio = max(span_a, span_b) / min(span_a, span_b)
+        if ratio > 1.3:
+            return False, []
+
+    # Check mirror symmetry on element axis
+    elem_axes = [0, 1, 2]
+    elem_axes.remove(boom_axis)
+    ca, cb = g_a.centroid, g_b.centroid
+    # On the element's main span axis, centroids should be on opposite sides
+    mirror_found = False
+    for ax in elem_axes:
+        if abs(ca[ax] + cb[ax]) < 0.5 * max(abs(ca[ax]), abs(cb[ax]), 0.01):
+            # Sum near zero → opposite signs → mirror pair
+            mirror_found = True
+            break
+    if not mirror_found:
+        return False, []
+
+    # Both groups should have bends (tube bends at corners)
+    if not _group_has_bends(g_a) or not _group_has_bends(g_b):
+        return False, []
+
+    # Build logical elements: merge the split pair into one synthetic group
+    merged = _WireGroup(tag=g_a.tag, wires=list(g_a.wires) + list(g_b.wires))
+    if single_cluster is not None:
+        reflector = groups[single_cluster[0]]
+    else:
+        # Both clusters are pairs — merge each
+        other = [c for c in clusters if c is not split_cluster][0]
+        reflector = _WireGroup(
+            tag=groups[other[0]].tag,
+            wires=list(groups[other[0]].wires) + list(groups[other[1]].wires),
+        )
+
+    return True, [merged, reflector]
+
+
 def _classify_moxon(ctx: _AnalysisContext, result: ClassificationResult) -> None:
-    """Moxon: 2-element with bent ends (driver + reflector, 4-6 wires per element)."""
+    """Moxon: 2-element with bent ends and a capacitive tip gap.
+
+    Handles two construction types:
+    - **Wire Moxon**: 2 groups, open tip gaps between elements.
+    - **Tube Moxon**: 3-4 groups, driven element split at feedpoint
+      into mirror-symmetric halves (closed paths modelling metal tubes).
+    """
     if result.confidence >= 0.7:
         return
-    if ctx.n_wire_groups != 2:
+    if not 2 <= ctx.n_wire_groups <= 4:
         return
-    # Moxon has 2 groups with ~3 wires each (center + 2 bent tails)
-    wire_counts = [len(g.wires) for g in ctx.wire_groups]
-    if all(2 <= c <= 5 for c in wire_counts):
-        # Reject if all wires within each group are collinear
-        # (stepped-diameter elements, not bent Moxon ends)
-        all_collinear = True
-        for g in ctx.wire_groups:
-            d = g.element_direction
-            if d == (0, 0, 0) or len(g.wires) < 2:
-                continue
-            for w in g.wires:
-                lp = w.labeled_params
-                coords = [lp.get(k) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
-                if not all(isinstance(v, (int, float)) for v in coords):
-                    continue
-                x1, y1, z1, x2, y2, z2 = coords
-                dx, dy, dz = x2 - x1, y2 - y1, z2 - z1
-                mag = math.sqrt(dx * dx + dy * dy + dz * dz)
-                if mag > 0:
-                    dot = abs(d[0] * dx / mag + d[1] * dy / mag + d[2] * dz / mag)
-                    if dot < 0.9:
-                        all_collinear = False
-                        break
-            if not all_collinear:
-                break
-        if all_collinear:
+
+    is_tube = False
+    check_groups = ctx.wire_groups
+
+    # For 3-4 groups, check for tube Moxon (split driven element)
+    if ctx.n_wire_groups >= 3:
+        is_tube, logical = _detect_tube_moxon(ctx)
+        if not is_tube:
             return
-        # Check for bent-end topology: wires going in different directions
-        for g in ctx.wire_groups:
-            if len(g.wires) >= 3:
-                result.antenna_type = "moxon"
-                result.confidence = max(result.confidence, 0.45)
-                result.evidence.append("2 element groups with multi-wire bent geometry")
-                return
+        check_groups = logical
+
+    # From here, check_groups has 2 logical elements
+    if len(check_groups) != 2:
+        return
+    wire_counts = [len(g.wires) for g in check_groups]
+    if not all(2 <= c <= 20 for c in wire_counts):
+        return
+
+    # At least one element must have bends
+    if not any(_group_has_bends(g) for g in check_groups):
+        return
+
+    # Must have at least one group with 3+ wires (center + 2 tails)
+    if not any(len(g.wires) >= 3 for g in check_groups):
+        return
+
+    # --- Wire Moxon: tip-gap check (defining feature) ---
+    if not is_tube:
+        tip_dists = _find_tip_gaps(check_groups)
+        dominant = max(g.dominant_span for g in check_groups)
+
+        if tip_dists and dominant > 0:
+            gap_threshold = dominant * 0.20
+            close_pairs = [d for d in tip_dists if d < gap_threshold]
+
+            if len(close_pairs) >= 2:
+                avg_gap = (close_pairs[0] + close_pairs[1]) / 2
+                if avg_gap > 0.001:  # > 1mm → open gap, not a loop
+                    result.antenna_type = "moxon"
+                    result.subtypes.append("wire")
+                    result.confidence = max(result.confidence, 0.70)
+                    result.evidence.append(
+                        f"wire moxon: 2 bent elements with tip gap "
+                        f"{avg_gap * 1000:.1f}mm (capacitive coupling)"
+                    )
+                    return
+
+        # Fallback: bent geometry without measurable tip gap
+        result.antenna_type = "moxon"
+        result.subtypes.append("wire")
+        result.confidence = max(result.confidence, 0.45)
+        result.evidence.append("2 element groups with multi-wire bent geometry")
+        return
+
+    # --- Tube Moxon: split driven element (closed paths) ---
+    # Verify 2-element spacing is consistent with Moxon proportions.
+    # The boom spacing should be 0.04–0.20λ and element spans similar.
+    c0, c1 = check_groups[0].centroid, check_groups[1].centroid
+    boom_spacing = math.sqrt(sum((a - b) ** 2 for a, b in zip(c0, c1)))
+    dominant = max(g.dominant_span for g in check_groups)
+
+    if dominant > 0 and boom_spacing > 0:
+        spacing_ratio = boom_spacing / dominant
+        # Moxon boom spacing is typically 5–40% of element span
+        if 0.03 <= spacing_ratio <= 0.50:
+            result.antenna_type = "moxon"
+            result.subtypes.append("tube")
+            result.confidence = max(result.confidence, 0.70)
+            result.evidence.append(
+                f"tube moxon: split driven element "
+                f"({ctx.n_wire_groups} groups), boom spacing "
+                f"{boom_spacing:.3f}m ({spacing_ratio:.0%} of span)"
+            )
+            return
+
+    # Relaxed fallback: structure matches tube pattern but spacing is unusual
+    result.antenna_type = "moxon"
+    result.subtypes.append("tube")
+    result.confidence = max(result.confidence, 0.45)
+    result.evidence.append(
+        f"tube moxon: split driven element ({ctx.n_wire_groups} groups)"
+    )
 
 
 def _classify_yagi(ctx: _AnalysisContext, result: ClassificationResult) -> None:
