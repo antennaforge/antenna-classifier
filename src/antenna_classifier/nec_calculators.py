@@ -20,6 +20,7 @@ Usage::
 
 from __future__ import annotations
 
+import inspect
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -1346,14 +1347,18 @@ def calc_for_type(
     fn = _CALC_MAP.get(normalised)
     if fn is None:
         return None
+    params = inspect.signature(fn).parameters
+    filtered_kwargs = {
+        key: value for key, value in kwargs.items() if key in params
+    }
     # LPDA needs freq_mhz_low / freq_mhz_high instead of a single freq_mhz.
     # Derive a reasonable range from the single design frequency when the
     # caller doesn't supply explicit bounds (~2.5:1 bandwidth ratio).
     if normalised == "lpda":
-        kwargs.setdefault("freq_mhz_low", freq_mhz * 0.6)
-        kwargs.setdefault("freq_mhz_high", freq_mhz * 1.5)
-        return fn(**kwargs)
-    return fn(freq_mhz=freq_mhz, **kwargs)
+        filtered_kwargs.setdefault("freq_mhz_low", freq_mhz * 0.6)
+        filtered_kwargs.setdefault("freq_mhz_high", freq_mhz * 1.5)
+        return fn(**filtered_kwargs)
+    return fn(freq_mhz=freq_mhz, **filtered_kwargs)
 
 
 def supported_types() -> list[str]:

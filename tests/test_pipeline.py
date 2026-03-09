@@ -1097,6 +1097,19 @@ class TestExtractedConceptsFreqRange:
         c = ExtractedConcepts(antenna_type="dipole", freq_mhz=14.175)
         assert _calc_kwargs(c) == {}
 
+    def test_yagi_calc_ignores_document_range_kwargs(self):
+        """Narrowband calculators must ignore broadband range metadata."""
+        from antenna_classifier.nec_calculators import calc_for_type
+        from antenna_classifier.nec_pipeline import _calc_kwargs
+
+        c = ExtractedConcepts(
+            antenna_type="yagi", freq_mhz=28.4,
+            freq_mhz_low=27.0, freq_mhz_high=29.7,
+        )
+        result = calc_for_type(c.antenna_type, c.freq_mhz, **_calc_kwargs(c))
+        assert result is not None
+        assert result.antenna_type == "yagi"
+
     def test_lpda_calc_uses_document_range(self):
         """End-to-end: extracted range reaches calc_lpda via calc_for_type."""
         from antenna_classifier.nec_calculators import calc_for_type
