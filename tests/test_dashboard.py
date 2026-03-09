@@ -8,6 +8,7 @@ Tests API endpoints with a real (tiny) NEC directory, ensuring:
 - Pattern endpoint rejects invalid types
 """
 
+from collections.abc import Generator
 import json
 import textwrap
 import time
@@ -56,11 +57,12 @@ def nec_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def client(nec_dir: Path) -> TestClient:
+def client(nec_dir: Path) -> Generator[TestClient, None, None]:
     """Create a test client with a fresh app."""
     import os
     # Redirect user NEC dir to temp path so tests don't need /data
     os.environ["USER_NEC_DIR"] = str(nec_dir / "user_nec_files")
+    os.environ["CLASSIFICATION_DB"] = str(nec_dir / "classification_reviews.sqlite")
     app = create_app(nec_dir=nec_dir, solver_url="http://localhost:99999")
     with TestClient(app) as c:
         # Wait briefly for the background catalog scan to finish
@@ -147,6 +149,8 @@ class TestFileDetail:
         assert "cards" in data
         assert "validation" in data
         assert data["valid"] is True
+        assert "auto_antenna_type" in data
+        assert "fingerprint_details" in data
 
     def test_file_not_found(self, client: TestClient):
         resp = client.get("/api/file/nonexistent.nec")
@@ -244,6 +248,60 @@ class TestReload:
         resp = client.get("/api/catalog")
         # Depending on timing it might already be done, but shouldn't error
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Classification review endpoint
+# ---------------------------------------------------------------------------
+
+class TestClassificationReview:
+    def test_save_review_updates_effective_type(self, client: TestClient):
+        resp = client.post(
+            "/api/review/yagi.nec",
+            json={
+                "reviewed_antenna_type": "quad",
+                "reason": "manual correction after geometry review",
+                "references": ["https://example.com/reference"],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["antenna_type"] == "quad"
+        assert data["auto_antenna_type"] == "yagi"
+        assert data["is_reviewed"] is True
+        assert data["review_reason"] == "manual correction after geometry review"
+        assert data["references"][0]["url"] == "https://example.com/reference"
+
+    def test_catalog_uses_reviewed_type(self, client: TestClient):
+        client.post(
+            "/api/review/yagi.nec",
+            json={"reviewed_antenna_type": "quad", "reason": "override"},
+        )
+        resp = client.get("/api/catalog?antenna_type=quad")
+        assert resp.status_code == 200
+        files = {row["filename"] for row in resp.json()["files"]}
+        assert "yagi.nec" in files
+
+    def test_clear_review_restores_auto_type(self, client: TestClient):
+        client.post(
+            "/api/review/yagi.nec",
+            json={"reviewed_antenna_type": "quad", "reason": "override"},
+        )
+        resp = client.post(
+            "/api/review/yagi.nec",
+            json={"reviewed_antenna_type": "", "reason": "", "references": []},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["antenna_type"] == "yagi"
+        assert data["is_reviewed"] is False
+
+    def test_invalid_review_type_rejected(self, client: TestClient):
+        resp = client.post(
+            "/api/review/yagi.nec",
+            json={"reviewed_antenna_type": "definitely_not_a_real_type"},
+        )
+        assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------

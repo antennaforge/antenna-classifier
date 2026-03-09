@@ -20,6 +20,13 @@ from pathlib import Path
 from typing import Any
 
 from . import classifier, parser, validator
+from .classification_store import (
+    ensure_schema as ensure_review_schema,
+    get_record as get_review_record,
+    merge_review,
+    save_review,
+    upsert_auto_record,
+)
 from .fingerprint import fingerprint as make_fingerprint
 from .simulator import simulate, DEFAULT_URL as DEFAULT_SOLVER_URL
 
@@ -57,6 +64,69 @@ def create_app(
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    review_db_path = ensure_review_schema(
+        os.getenv(
+            "CLASSIFICATION_DB",
+            str(Path(os.getenv("USER_NEC_DIR", "/data/user_nec_files")) / "classification_reviews.sqlite"),
+        ),
+    )
+
+    def _relative_path_for(path: Path) -> str:
+        return str(path.relative_to(nec_dir)) if path.is_relative_to(nec_dir) else path.name
+
+    def _file_key_for(path: Path) -> str:
+        return _relative_path_for(path)
+
+    def _build_auto_record(
+        path: Path,
+        parsed: Any,
+        val: Any,
+        cls: Any,
+        fp: Any,
+    ) -> dict[str, Any]:
+        return {
+            "file_key": _file_key_for(path),
+            "filename": path.name,
+            "path": str(path),
+            "relative_path": _relative_path_for(path),
+            "valid": val.valid,
+            "antenna_type": cls.antenna_type,
+            "auto_antenna_type": cls.antenna_type,
+            "confidence": round(cls.confidence, 2),
+            "frequency_mhz": cls.frequency_mhz,
+            "band": cls.band,
+            "element_count": cls.element_count,
+            "ground_type": cls.ground_type,
+            "wire_count": len(parsed.wire_cards),
+            "fingerprint": fp.signature,
+            "fingerprint_details": fp.to_dict(),
+            "complexity": round(fp.complexity_score, 3),
+            "evidence": cls.evidence,
+            "subtypes": cls.subtypes,
+            "errors": len(val.errors),
+            "warnings": len(val.warnings),
+        }
+
+    def _build_merged_record(path: Path) -> dict[str, Any]:
+        parsed = parser.parse_file(path)
+        val = validator.validate(parsed)
+        cls = classifier.classify(parsed)
+        fp = make_fingerprint(parsed)
+        auto_record = _build_auto_record(path, parsed, val, cls, fp)
+        upsert_auto_record(review_db_path, auto_record)
+        stored = get_review_record(review_db_path, auto_record["file_key"])
+        return merge_review(auto_record, stored)
+
+    def _update_catalog_record(record: dict[str, Any]) -> None:
+        with _catalog_lock:
+            for index, existing in enumerate(_catalog):
+                if existing.get("filename") == record.get("filename"):
+                    _catalog[index] = record
+                    break
+            else:
+                _catalog.append(record)
+            _catalog_index[record["filename"]] = record
+
     # ---- Cache of scanned files ----
     _catalog: list[dict] = []
     _catalog_index: dict[str, dict] = {}  # filename -> record
@@ -67,29 +137,7 @@ def create_app(
         """Scan and classify all NEC files (runs in background thread)."""
         for p in sorted(nec_dir.rglob("*.nec")):
             try:
-                parsed = parser.parse_file(p)
-                val = validator.validate(parsed)
-                cls = classifier.classify(parsed)
-                fp = make_fingerprint(parsed)
-                rec = {
-                    "filename": p.name,
-                    "path": str(p),
-                    "relative_path": str(p.relative_to(nec_dir)) if p.is_relative_to(nec_dir) else p.name,
-                    "valid": val.valid,
-                    "antenna_type": cls.antenna_type,
-                    "confidence": round(cls.confidence, 2),
-                    "frequency_mhz": cls.frequency_mhz,
-                    "band": cls.band,
-                    "element_count": cls.element_count,
-                    "ground_type": cls.ground_type,
-                    "wire_count": len(parsed.wire_cards),
-                    "fingerprint": fp.signature,
-                    "complexity": round(fp.complexity_score, 3),
-                    "evidence": cls.evidence,
-                    "subtypes": cls.subtypes,
-                    "errors": len(val.errors),
-                    "warnings": len(val.warnings),
-                }
+                rec = _build_merged_record(p)
                 with _catalog_lock:
                     _catalog.append(rec)
                     _catalog_index[p.name] = rec
@@ -185,35 +233,10 @@ def create_app(
     @app.get("/api/file/{filename:path}")
     async def get_file_detail(filename: str):
         p = _find_nec_file(filename)
-
-        # Re-parse for full detail
         parsed = parser.parse_file(p)
         val = validator.validate(parsed)
-        cls = classifier.classify(parsed)
-        fp = make_fingerprint(parsed)
-
-        # Use catalog record as base if available, otherwise build one
-        with _catalog_lock:
-            rec = _catalog_index.get(filename) or {}
-        base = rec or {
-            "filename": p.name,
-            "path": str(p),
-            "relative_path": str(p.relative_to(nec_dir)) if p.is_relative_to(nec_dir) else p.name,
-            "valid": val.valid,
-            "antenna_type": cls.antenna_type,
-            "confidence": round(cls.confidence, 2),
-            "frequency_mhz": cls.frequency_mhz,
-            "band": cls.band,
-            "element_count": cls.element_count,
-            "ground_type": cls.ground_type,
-            "wire_count": len(parsed.wire_cards),
-            "fingerprint": fp.signature,
-            "complexity": round(fp.complexity_score, 3),
-            "evidence": cls.evidence,
-            "subtypes": cls.subtypes,
-            "errors": len(val.errors),
-            "warnings": len(val.warnings),
-        }
+        base = _build_merged_record(p)
+        _update_catalog_record(base)
 
         # Read raw NEC content (first 200 lines max for display)
         raw_lines = p.read_text(errors="replace").splitlines()[:200]
@@ -229,7 +252,64 @@ def create_app(
                 {"severity": i.severity.value, "message": i.message, "line": i.line}
                 for i in val.issues
             ],
-            "evidence": cls.evidence,
+            "evidence": base.get("evidence", []),
+        })
+
+    @app.post("/api/review/{filename:path}")
+    async def save_file_review(filename: str, request: "Request"):
+        p = _find_nec_file(filename)
+        body = await request.json()
+        reviewed_type = (body.get("reviewed_antenna_type") or "").strip() or None
+        if reviewed_type and reviewed_type not in classifier.ANTENNA_TYPES:
+            raise HTTPException(400, f"Unknown antenna type: {reviewed_type}")
+
+        references_in = body.get("references") or []
+        references: list[dict[str, str]] = []
+        if not isinstance(references_in, list):
+            raise HTTPException(400, "references must be a list")
+        for item in references_in:
+            if isinstance(item, str):
+                url = item.strip()
+                if url:
+                    references.append({"url": url})
+            elif isinstance(item, dict):
+                url = str(item.get("url") or "").strip()
+                if url:
+                    references.append({
+                        "url": url,
+                        "title": str(item.get("title") or "").strip(),
+                        "note": str(item.get("note") or "").strip(),
+                    })
+
+        parsed = parser.parse_file(p)
+        val = validator.validate(parsed)
+        cls = classifier.classify(parsed)
+        fp = make_fingerprint(parsed)
+        auto_record = _build_auto_record(p, parsed, val, cls, fp)
+        upsert_auto_record(review_db_path, auto_record)
+        save_review(
+            review_db_path,
+            auto_record["file_key"],
+            reviewed_antenna_type=reviewed_type,
+            reason=str(body.get("reason") or ""),
+            references=references,
+        )
+        updated = merge_review(auto_record, get_review_record(review_db_path, auto_record["file_key"]))
+        _update_catalog_record(updated)
+
+        raw_lines = p.read_text(errors="replace").splitlines()[:200]
+        return JSONResponse({
+            **updated,
+            "nec_content": "\n".join(raw_lines),
+            "cards": [
+                {"type": c.card_type, "line": c.line_number, "raw": c.raw}
+                for c in parsed.cards[:100]
+            ],
+            "validation": [
+                {"severity": i.severity.value, "message": i.message, "line": i.line}
+                for i in val.issues
+            ],
+            "evidence": updated.get("evidence", []),
         })
 
     @app.get("/api/geometry/{filename:path}")

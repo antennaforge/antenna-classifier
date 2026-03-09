@@ -297,6 +297,7 @@ let catalog = [];
 let summary = {};
 let activeFile = null;
 let currentUser = null;
+let antennaTypes = [];
 
 // ---- Boot ----
 document.addEventListener('DOMContentLoaded', async () => {
@@ -408,6 +409,7 @@ function renderFileList(files) {
       <div class="name">${esc(f.filename)}</div>
       <div class="meta">
         <span class="badge badge-type">${esc(f.antenna_type || 'unknown')}</span>
+        ${f.is_reviewed ? `<span class="badge badge-band" title="Human-reviewed classification">reviewed</span>` : ''}
         ${f.band ? `<span class="badge badge-band">${esc(f.band)}</span>` : ''}
         <span class="badge ${f.valid ? 'badge-valid' : 'badge-invalid'}">${f.valid ? 'valid' : 'invalid'}</span>
         <span class="badge badge-conf">${(f.confidence*100).toFixed(0)}%</span>
@@ -520,6 +522,7 @@ function renderDetail(d) {
         <div class="detail-title">${esc(d.filename)}</div>
         <div class="detail-badges">
           <span class="badge badge-type">${esc(d.antenna_type)}</span>
+          ${d.is_reviewed ? `<span class="badge badge-band" title="Human-reviewed override applied">reviewed</span>` : ''}
           ${d.band ? `<span class="badge badge-band">${esc(d.band)}</span>` : ''}
           <span class="badge ${d.valid ? 'badge-valid' : 'badge-invalid'}">${d.valid ? 'valid' : 'invalid'}</span>
           <span class="badge badge-conf">${(d.confidence*100).toFixed(0)}%</span>
@@ -529,6 +532,7 @@ function renderDetail(d) {
 
     <div class="info-grid">
       <div class="info-card"><div class="label">Antenna Type</div><div class="value">${esc(d.antenna_type)}</div></div>
+      <div class="info-card"><div class="label">Classifier Type</div><div class="value">${esc(d.auto_antenna_type || d.antenna_type)}</div></div>
       <div class="info-card"><div class="label">Confidence</div><div class="value">${(d.confidence*100).toFixed(1)}%</div></div>
       <div class="info-card"><div class="label">Frequency</div><div class="value">${d.frequency_mhz ? d.frequency_mhz.toFixed(2)+' MHz' : 'N/A'}</div></div>
       <div class="info-card"><div class="label">Band</div><div class="value">${esc(d.band || 'N/A')}</div></div>
@@ -543,6 +547,7 @@ function renderDetail(d) {
       <div class="tab active" data-tab="tab-3d" onclick="switchTab(this)">3D View</div>
       <div class="tab" data-tab="tab-sim" onclick="switchTab(this)">Simulation</div>
       <div class="tab" data-tab="tab-evidence" onclick="switchTab(this)">Evidence</div>
+      <div class="tab" data-tab="tab-review" onclick="switchTab(this)">Review</div>
       <div class="tab" data-tab="tab-validation" onclick="switchTab(this)">Validation (${(d.validation||[]).length})</div>
       <div class="tab" data-tab="tab-nec" onclick="switchTab(this)">NEC Source</div>
     </div>
@@ -616,6 +621,44 @@ function renderDetail(d) {
       </div>` : ''}
     </div>
 
+    <div class="tab-content" id="tab-review">
+      <div class="section">
+        <h3>Review Classification</h3>
+        <div class="info-grid" style="margin-bottom:16px;">
+          <div class="info-card"><div class="label">Effective Type</div><div class="value">${esc(d.antenna_type || 'unknown')}</div></div>
+          <div class="info-card"><div class="label">Auto Type</div><div class="value">${esc(d.auto_antenna_type || d.antenna_type || 'unknown')}</div></div>
+          <div class="info-card"><div class="label">Review Status</div><div class="value">${d.is_reviewed ? 'reviewed' : 'auto only'}</div></div>
+          <div class="info-card"><div class="label">Reviewed At</div><div class="value">${esc(d.reviewed_at || 'N/A')}</div></div>
+        </div>
+        <div style="display:grid;gap:12px;max-width:760px;">
+          <label style="display:grid;gap:6px;">
+            <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Override Antenna Type</span>
+            <select id="review-type" data-selected="${esc(d.reviewed_antenna_type || '')}" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 12px;"></select>
+          </label>
+          <label style="display:grid;gap:6px;">
+            <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Reason</span>
+            <textarea id="review-reason" rows="4" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 12px;resize:vertical;">${esc(d.review_reason || '')}</textarea>
+          </label>
+          <label style="display:grid;gap:6px;">
+            <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Credible References</span>
+            <textarea id="review-refs" rows="4" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 12px;resize:vertical;" placeholder="One URL per line">${esc((d.references || []).map(r => r.url).join('\n'))}</textarea>
+          </label>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button id="review-save" data-filename="${esc(d.filename)}" onclick="saveClassificationReview(this.dataset.filename)" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 14px;cursor:pointer;font-weight:600;">Save Review</button>
+            <button id="review-clear" data-filename="${esc(d.filename)}" onclick="clearClassificationReview(this.dataset.filename)" style="background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:10px 14px;cursor:pointer;">Clear Override</button>
+            <span id="review-status" style="font-size:13px;color:var(--muted);"></span>
+          </div>
+        </div>
+        ${(d.references || []).length ? `
+        <div class="section" style="padding-left:0;padding-right:0;">
+          <h3>Stored References</h3>
+          <ul class="evidence-list">
+            ${(d.references || []).map(r => `<li><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title || r.url)}</a></li>`).join('')}
+          </ul>
+        </div>` : ''}
+      </div>
+    </div>
+
     <!-- Validation tab -->
     <div class="tab-content" id="tab-validation">
       ${(d.validation||[]).length ? `
@@ -638,6 +681,54 @@ function renderDetail(d) {
       <div class="nec-viewer">${esc(d.nec_content || 'No content available')}</div>
     </div>
   `;
+  _ensureTypes();
+}
+
+async function saveClassificationReview(filename) {
+  const status = document.getElementById('review-status');
+  const saveBtn = document.getElementById('review-save');
+  const reviewedType = document.getElementById('review-type').value || null;
+  const reason = document.getElementById('review-reason').value;
+  const references = document.getElementById('review-refs').value
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(url => ({ url }));
+  saveBtn.disabled = true;
+  status.textContent = 'Saving review...';
+  try {
+    const resp = await fetch(`${BASE_URL}/api/review/${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reviewed_antenna_type: reviewedType,
+        reason,
+        references,
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    await refreshCatalog();
+    renderDetail(data);
+    load3DView(filename);
+    status.textContent = 'Review saved';
+  } catch (e) {
+    status.textContent = `Failed: ${e.message}`;
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+function clearClassificationReview(filename) {
+  const reviewType = document.getElementById('review-type');
+  const reviewReason = document.getElementById('review-reason');
+  reviewType.value = '';
+  reviewReason.value = '';
+  document.getElementById('review-refs').value = '';
+  return saveClassificationReview(filename);
 }
 
 function switchTab(tabEl) {
@@ -1390,18 +1481,31 @@ async function deleteUserAntenna(id) {
 // ---- Unified Create Modal ----
 let _typesLoaded = false;
 function _ensureTypes() {
-  if (_typesLoaded) return;
+  if (_typesLoaded) {
+    _populateTypeSelects();
+    return;
+  }
   _typesLoaded = true;
   fetch(`${BASE_URL}/api/types`).then(r => r.json()).then(d => {
-    const opts = (d.types || []).filter(t => t !== 'unknown' && t !== 'wire_object' && t !== 'error');
-    const descSel = document.getElementById('desc-type');
-    const pdfSel = document.getElementById('pdf-type');
-    const urlSel = document.getElementById('url-type');
-    const optsHtml = opts.map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
-    descSel.innerHTML = optsHtml;
-    pdfSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
-    urlSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
+    antennaTypes = (d.types || []).filter(t => t !== 'unknown' && t !== 'wire_object' && t !== 'error');
+    _populateTypeSelects();
   });
+}
+
+function _populateTypeSelects() {
+  const optsHtml = antennaTypes.map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
+  const descSel = document.getElementById('desc-type');
+  const pdfSel = document.getElementById('pdf-type');
+  const urlSel = document.getElementById('url-type');
+  const reviewSel = document.getElementById('review-type');
+  if (descSel) descSel.innerHTML = optsHtml;
+  if (pdfSel) pdfSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
+  if (urlSel) urlSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
+  if (reviewSel) {
+    const selected = reviewSel.dataset.selected || '';
+    reviewSel.innerHTML = '<option value="">(use classifier result)</option>' + optsHtml;
+    reviewSel.value = selected;
+  }
 }
 
 function openCreateModal(tab) {
