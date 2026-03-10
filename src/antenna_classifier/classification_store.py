@@ -8,6 +8,58 @@ from pathlib import Path
 from typing import Any
 
 
+def _migrate_legacy_references(conn: sqlite3.Connection) -> None:
+    """Copy legacy per-file references into the normalized catalog/link tables."""
+    legacy_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'classification_references'",
+    ).fetchone()
+    if not legacy_exists:
+        return
+
+    rows = conn.execute(
+        """
+        SELECT reviews.file_key,
+               COALESCE(reviews.reviewed_antenna_type, reviews.auto_antenna_type, 'unknown') AS antenna_type,
+               legacy.ordinal,
+               legacy.url,
+               legacy.title,
+               legacy.note
+        FROM classification_reviews AS reviews
+        JOIN classification_references AS legacy
+          ON legacy.file_key = reviews.file_key
+        ORDER BY reviews.file_key, legacy.ordinal
+        """
+    ).fetchall()
+    for file_key, antenna_type, ordinal, url, title, note in rows:
+        if not url:
+            continue
+        conn.execute(
+            """
+            INSERT INTO antenna_type_references (antenna_type, url, title, note)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(antenna_type, url) DO UPDATE SET
+                title = COALESCE(NULLIF(excluded.title, ''), antenna_type_references.title),
+                note = COALESCE(NULLIF(excluded.note, ''), antenna_type_references.note),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (antenna_type, url, title, note),
+        )
+        ref_row = conn.execute(
+            "SELECT id FROM antenna_type_references WHERE antenna_type = ? AND url = ?",
+            (antenna_type, url),
+        ).fetchone()
+        if ref_row is None:
+            continue
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO classification_reference_links (
+                file_key, reference_id, ordinal
+            ) VALUES (?, ?, ?)
+            """,
+            (file_key, int(ref_row[0]), int(ordinal or 0)),
+        )
+
+
 def ensure_schema(db_path: str | Path) -> Path:
     """Create the SQLite schema if it does not already exist."""
     path = Path(db_path)
@@ -57,7 +109,54 @@ def ensure_schema(db_path: str | Path) -> Path:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS antenna_type_references (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                antenna_type TEXT NOT NULL,
+                url TEXT NOT NULL,
+                title TEXT,
+                note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (antenna_type, url)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS classification_reference_links (
+                file_key TEXT NOT NULL,
+                reference_id INTEGER NOT NULL,
+                ordinal INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (file_key, reference_id),
+                FOREIGN KEY (file_key) REFERENCES classification_reviews(file_key)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (reference_id) REFERENCES antenna_type_references(id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+        _migrate_legacy_references(conn)
     return path
+
+
+def list_type_references(db_path: str | Path, antenna_type: str) -> list[dict[str, Any]]:
+    """List catalog references for a specific antenna type."""
+    path = ensure_schema(db_path)
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, antenna_type, url, title, note
+            FROM antenna_type_references
+            WHERE antenna_type = ?
+            ORDER BY COALESCE(NULLIF(title, ''), url), id
+            """,
+            (antenna_type,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def upsert_auto_record(db_path: str | Path, record: dict[str, Any]) -> None:
@@ -119,15 +218,19 @@ def save_review(
     db_path: str | Path,
     file_key: str,
     *,
+    antenna_type: str,
     reviewed_antenna_type: str | None,
     reason: str = "",
+    reference_ids: list[int] | None = None,
     references: list[dict[str, str]] | None = None,
 ) -> None:
     """Persist a human review override and its supporting references."""
     path = ensure_schema(db_path)
     references = references or []
+    reference_ids = reference_ids or []
     clean_type = reviewed_antenna_type.strip() if reviewed_antenna_type else None
     clean_type = clean_type or None
+    catalog_type = antenna_type.strip() or clean_type or "unknown"
     with sqlite3.connect(path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         updated = conn.execute(
@@ -147,10 +250,64 @@ def save_review(
             "DELETE FROM classification_references WHERE file_key = ?",
             (file_key,),
         )
-        for index, ref in enumerate(references):
+        conn.execute(
+            "DELETE FROM classification_reference_links WHERE file_key = ?",
+            (file_key,),
+        )
+        ordinal = 0
+        linked_ids: set[int] = set()
+        for ref_id in reference_ids:
+            row = conn.execute(
+                "SELECT id FROM antenna_type_references WHERE id = ? AND antenna_type = ?",
+                (int(ref_id), catalog_type),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown reference id {ref_id} for antenna type {catalog_type}")
+            linked_ids.add(int(ref_id))
+            conn.execute(
+                """
+                INSERT INTO classification_reference_links (file_key, reference_id, ordinal)
+                VALUES (?, ?, ?)
+                """,
+                (file_key, int(ref_id), ordinal),
+            )
+            ordinal += 1
+        for index, ref in enumerate(references, start=ordinal):
             url = (ref.get("url") or "").strip()
             if not url:
                 continue
+            title = (ref.get("title") or "").strip() or None
+            note = (ref.get("note") or "").strip() or None
+            conn.execute(
+                """
+                INSERT INTO antenna_type_references (
+                    antenna_type, url, title, note
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(antenna_type, url) DO UPDATE SET
+                    title = COALESCE(NULLIF(excluded.title, ''), antenna_type_references.title),
+                    note = COALESCE(NULLIF(excluded.note, ''), antenna_type_references.note),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (catalog_type, url, title, note),
+            )
+            ref_row = conn.execute(
+                "SELECT id FROM antenna_type_references WHERE antenna_type = ? AND url = ?",
+                (catalog_type, url),
+            ).fetchone()
+            if ref_row is None:
+                continue
+            ref_id = int(ref_row[0])
+            if ref_id in linked_ids:
+                continue
+            linked_ids.add(ref_id)
+            conn.execute(
+                """
+                INSERT INTO classification_reference_links (
+                    file_key, reference_id, ordinal
+                ) VALUES (?, ?, ?)
+                """,
+                (file_key, ref_id, index),
+            )
             conn.execute(
                 """
                 INSERT INTO classification_references (
@@ -161,8 +318,8 @@ def save_review(
                     file_key,
                     index,
                     url,
-                    (ref.get("title") or "").strip() or None,
-                    (ref.get("note") or "").strip() or None,
+                    title,
+                    note,
                 ),
             )
 
@@ -181,9 +338,25 @@ def get_record(db_path: str | Path, file_key: str) -> dict[str, Any] | None:
         if row is None:
             return None
         refs = conn.execute(
-            "SELECT url, title, note FROM classification_references WHERE file_key = ? ORDER BY ordinal",
+            """
+            SELECT catalog.id AS reference_id,
+                   catalog.antenna_type,
+                   catalog.url,
+                   catalog.title,
+                   catalog.note
+            FROM classification_reference_links AS links
+            JOIN antenna_type_references AS catalog
+              ON catalog.id = links.reference_id
+            WHERE links.file_key = ?
+            ORDER BY links.ordinal
+            """,
             (file_key,),
         ).fetchall()
+        if not refs:
+            refs = conn.execute(
+                "SELECT NULL AS reference_id, NULL AS antenna_type, url, title, note FROM classification_references WHERE file_key = ? ORDER BY ordinal",
+                (file_key,),
+            ).fetchall()
     return {
         "file_key": row["file_key"],
         "filename": row["filename"],
