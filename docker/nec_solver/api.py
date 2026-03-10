@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Body
 import ast as _ast
 import tempfile, subprocess, shlex, re, json, os, time, hashlib, math, threading
+from collections import deque
+from datetime import datetime, timezone
 
 # Allow selecting solver binary via environment (nec2c, nec2++, xnec2c). Default nec2c.
 NEC_BIN = os.getenv("NEC_BIN", "nec2c")
@@ -59,6 +61,229 @@ _sim_semaphore = threading.Semaphore(_MAX_CONCURRENT)
 _cache_hits = 0
 _cache_misses = 0
 _cache_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Solver telemetry — lightweight in-process counters and recent events
+# ---------------------------------------------------------------------------
+def _env_bool(name: str, default: str = "true") -> bool:
+    return os.getenv(name, default).strip().lower() not in {"0", "false", "no", "off"}
+
+
+SOLVER_TELEMETRY_ENABLED = _env_bool("SOLVER_TELEMETRY_ENABLED", "true")
+SOLVER_TELEMETRY_RECENT_LIMIT = max(1, int(os.getenv("SOLVER_TELEMETRY_RECENT_LIMIT", "50")))
+SOLVER_TELEMETRY_SAMPLE_LIMIT = max(1, int(os.getenv("SOLVER_TELEMETRY_SAMPLE_LIMIT", "256")))
+SOLVER_REPLICA_ID = os.getenv("SOLVER_REPLICA_ID", os.getenv("HOSTNAME", "ac-nec-solver"))
+_TELEMETRY_WINDOW_SECONDS = 300.0
+_TELEMETRY_EVENT_LIMIT = max(256, SOLVER_TELEMETRY_SAMPLE_LIMIT * 4)
+_TELEMETRY_LOCK = threading.Lock()
+_TELEMETRY_STARTED_AT = time.time()
+_TELEMETRY_ENDPOINT_NAMES = ("run", "currents", "pattern")
+
+
+def _utc_iso(ts: float | None = None) -> str:
+    value = datetime.fromtimestamp(ts if ts is not None else time.time(), tz=timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _new_endpoint_telemetry() -> dict:
+    return {
+        "requests": 0,
+        "success": 0,
+        "busy": 0,
+        "timeout": 0,
+        "error": 0,
+        "queue_wait_ms": deque(maxlen=SOLVER_TELEMETRY_SAMPLE_LIMIT),
+        "exec_ms": deque(maxlen=SOLVER_TELEMETRY_SAMPLE_LIMIT),
+    }
+
+
+_TELEMETRY_TOTALS = {
+    "requests": 0,
+    "success": 0,
+    "busy": 0,
+    "timeout": 0,
+    "error": 0,
+}
+_TELEMETRY_ENDPOINTS = {
+    name: _new_endpoint_telemetry()
+    for name in _TELEMETRY_ENDPOINT_NAMES
+}
+_TELEMETRY_IN_FLIGHT = 0
+_TELEMETRY_RECENT_ERRORS = deque(maxlen=SOLVER_TELEMETRY_RECENT_LIMIT)
+_TELEMETRY_RECENT_BUSY = deque(maxlen=SOLVER_TELEMETRY_RECENT_LIMIT)
+_TELEMETRY_RECENT_TIMEOUTS = deque(maxlen=SOLVER_TELEMETRY_RECENT_LIMIT)
+_TELEMETRY_EVENTS = deque(maxlen=_TELEMETRY_EVENT_LIMIT)
+
+
+def _telemetry_reset() -> None:
+    global _TELEMETRY_STARTED_AT, _TELEMETRY_IN_FLIGHT
+    with _TELEMETRY_LOCK:
+        _TELEMETRY_STARTED_AT = time.time()
+        _TELEMETRY_IN_FLIGHT = 0
+        _TELEMETRY_EVENTS.clear()
+        _TELEMETRY_RECENT_ERRORS.clear()
+        _TELEMETRY_RECENT_BUSY.clear()
+        _TELEMETRY_RECENT_TIMEOUTS.clear()
+        for key in _TELEMETRY_TOTALS:
+            _TELEMETRY_TOTALS[key] = 0
+        for name in _TELEMETRY_ENDPOINT_NAMES:
+            _TELEMETRY_ENDPOINTS[name] = _new_endpoint_telemetry()
+
+
+def _telemetry_begin(endpoint: str) -> dict | None:
+    global _TELEMETRY_IN_FLIGHT
+    if not SOLVER_TELEMETRY_ENABLED:
+        return None
+    started = time.perf_counter()
+    with _TELEMETRY_LOCK:
+        _TELEMETRY_TOTALS["requests"] += 1
+        _TELEMETRY_ENDPOINTS[endpoint]["requests"] += 1
+        _TELEMETRY_IN_FLIGHT += 1
+    return {
+        "endpoint": endpoint,
+        "started": started,
+        "completed": False,
+    }
+
+
+def _telemetry_complete(
+    token: dict | None,
+    outcome: str,
+    *,
+    queue_wait_ms: float | None = None,
+    exec_ms: float | None = None,
+    error_type: str | None = None,
+    detail: str | None = None,
+) -> None:
+    global _TELEMETRY_IN_FLIGHT
+    if token is None or token.get("completed"):
+        return
+
+    endpoint = token["endpoint"]
+    now = time.time()
+    recent_event = {
+        "ts": _utc_iso(now),
+        "ts_epoch": now,
+        "endpoint": endpoint,
+        "type": error_type or outcome,
+    }
+    if detail:
+        recent_event["detail"] = str(detail)[:500]
+
+    with _TELEMETRY_LOCK:
+        token["completed"] = True
+        _TELEMETRY_TOTALS[outcome] += 1
+        _TELEMETRY_ENDPOINTS[endpoint][outcome] += 1
+        _TELEMETRY_IN_FLIGHT = max(0, _TELEMETRY_IN_FLIGHT - 1)
+        if queue_wait_ms is not None:
+            _TELEMETRY_ENDPOINTS[endpoint]["queue_wait_ms"].append(float(queue_wait_ms))
+        if exec_ms is not None:
+            _TELEMETRY_ENDPOINTS[endpoint]["exec_ms"].append(float(exec_ms))
+        _TELEMETRY_EVENTS.append({
+            "ts_epoch": now,
+            "outcome": outcome,
+        })
+        if outcome == "busy":
+            recent_event["wait_timeout_seconds"] = 60
+            _TELEMETRY_RECENT_BUSY.appendleft(recent_event)
+        elif outcome == "timeout":
+            _TELEMETRY_RECENT_TIMEOUTS.appendleft(recent_event)
+            _TELEMETRY_RECENT_ERRORS.appendleft(recent_event)
+        elif outcome == "error":
+            _TELEMETRY_RECENT_ERRORS.appendleft(recent_event)
+
+
+def _sample_stats(samples: deque) -> dict[str, float | None]:
+    values = list(samples)
+    if not values:
+        return {"avg": None, "p95": None}
+    ordered = sorted(values)
+    idx = max(0, math.ceil(0.95 * len(ordered)) - 1)
+    return {
+        "avg": round(sum(values) / len(values), 3),
+        "p95": round(ordered[idx], 3),
+    }
+
+
+def _telemetry_window_counts() -> dict[str, int]:
+    cutoff = time.time() - _TELEMETRY_WINDOW_SECONDS
+    requests = 0
+    busy = 0
+    errors = 0
+    for event in reversed(_TELEMETRY_EVENTS):
+        if event["ts_epoch"] < cutoff:
+            break
+        requests += 1
+        if event["outcome"] == "busy":
+            busy += 1
+        if event["outcome"] in {"error", "timeout"}:
+            errors += 1
+    return {
+        "last_5m_requests": requests,
+        "last_5m_busy": busy,
+        "last_5m_errors": errors,
+    }
+
+
+def _telemetry_summary_payload() -> dict:
+    with _cache_lock:
+        cache_hits = _cache_hits
+        cache_misses = _cache_misses
+    try:
+        cached_entries = sum(1 for f in os.listdir(CACHE_DIR) if f.endswith(".json"))
+    except OSError:
+        cached_entries = 0
+
+    with _TELEMETRY_LOCK:
+        endpoint_snapshot = {}
+        for name, stats in _TELEMETRY_ENDPOINTS.items():
+            endpoint_snapshot[name] = {
+                "requests": stats["requests"],
+                "success": stats["success"],
+                "busy": stats["busy"],
+                "timeout": stats["timeout"],
+                "error": stats["error"],
+                "queue_wait_ms": _sample_stats(stats["queue_wait_ms"]),
+                "exec_ms": _sample_stats(stats["exec_ms"]),
+            }
+        totals = dict(_TELEMETRY_TOTALS)
+        in_flight = _TELEMETRY_IN_FLIGHT
+        started_at = _TELEMETRY_STARTED_AT
+        window = _telemetry_window_counts()
+
+    cache_total = cache_hits + cache_misses
+    return {
+        "ok": True,
+        "enabled": SOLVER_TELEMETRY_ENABLED,
+        "service": "nec-solver",
+        "replica_id": SOLVER_REPLICA_ID,
+        "solver_binary": NEC_BIN,
+        "started_at": _utc_iso(started_at),
+        "uptime_seconds": round(max(0.0, time.time() - started_at), 3),
+        "max_concurrent": _MAX_CONCURRENT,
+        "in_flight": in_flight,
+        "totals": totals,
+        "cache": {
+            "hits": cache_hits,
+            "misses": cache_misses,
+            "cached_entries": cached_entries,
+            "hit_rate": round(cache_hits / cache_total, 4) if cache_total else 0.0,
+        },
+        "endpoints": endpoint_snapshot,
+        "window": window,
+    }
+
+
+def _telemetry_recent_payload() -> dict:
+    with _TELEMETRY_LOCK:
+        return {
+            "ok": True,
+            "enabled": SOLVER_TELEMETRY_ENABLED,
+            "replica_id": SOLVER_REPLICA_ID,
+            "recent_errors": list(_TELEMETRY_RECENT_ERRORS),
+            "recent_busy_events": list(_TELEMETRY_RECENT_BUSY),
+            "recent_timeout_events": list(_TELEMETRY_RECENT_TIMEOUTS),
+        }
 
 
 def _cache_key(sanitized_deck: str, endpoint: str, z0: float = 50.0) -> str:
@@ -942,6 +1167,16 @@ def cache_stats():
             "cache_dir": CACHE_DIR,
         }
 
+
+@app.get("/telemetry/summary")
+def telemetry_summary():
+    return _telemetry_summary_payload()
+
+
+@app.get("/telemetry/recent")
+def telemetry_recent():
+    return _telemetry_recent_payload()
+
 @app.post("/cache/clear")
 def cache_clear():
     """Remove all cached simulation results."""
@@ -966,36 +1201,63 @@ def sanitize_debug(payload: dict = Body(...)):
 
 @app.post("/run")
 def run(payload: dict = Body(...)):
+    telemetry = _telemetry_begin("run")
+    queue_wait_ms = None
+    exec_ms = None
+    acquired = False
     # Accept legacy embedded form {"nec_deck": "..."} plus optional z0, dump_raw
-    if not isinstance(payload, dict):
-        return {"ok": False, "error": "invalid_payload"}
-    nec_deck = payload.get("nec_deck") or payload.get("nec") or ""
-    if not nec_deck:
-        return {"ok": False, "error": "missing_nec_deck"}
-    z0 = float(payload.get("z0", 50.0))
-    dump_raw = bool(payload.get("dump_raw"))
-
-    sanitized = sanitize_nec(nec_deck)
-
-    # --- Cache check (skip when dump_raw requested) ---
-    if not dump_raw:
-        key = _cache_key(sanitized, "run", z0)
-        cached = _cache_get(key)
-        if cached is not None:
-            return cached
-
-    # --- Semaphore: limit concurrent nec2c processes ---
-    if not _sim_semaphore.acquire(timeout=60):
-        return {"ok": False, "error": "server_busy",
-                "detail": "Too many concurrent simulations; try again shortly"}
     try:
+        if not isinstance(payload, dict):
+            _telemetry_complete(telemetry, "error", error_type="invalid_payload")
+            return {"ok": False, "error": "invalid_payload"}
+        nec_deck = payload.get("nec_deck") or payload.get("nec") or ""
+        if not nec_deck:
+            _telemetry_complete(telemetry, "error", error_type="missing_nec_deck")
+            return {"ok": False, "error": "missing_nec_deck"}
+        z0 = float(payload.get("z0", 50.0))
+        dump_raw = bool(payload.get("dump_raw"))
+
+        sanitized = sanitize_nec(nec_deck)
+
+        # --- Cache check (skip when dump_raw requested) ---
+        if not dump_raw:
+            key = _cache_key(sanitized, "run", z0)
+            cached = _cache_get(key)
+            if cached is not None:
+                _telemetry_complete(telemetry, "success")
+                return cached
+
+        # --- Semaphore: limit concurrent nec2c processes ---
+        queue_started = time.perf_counter()
+        acquired = _sim_semaphore.acquire(timeout=60)
+        queue_wait_ms = (time.perf_counter() - queue_started) * 1000.0
+        if not acquired:
+            _telemetry_complete(
+                telemetry,
+                "busy",
+                queue_wait_ms=queue_wait_ms,
+                error_type="server_busy",
+                detail="Too many concurrent simulations; try again shortly",
+            )
+            return {"ok": False, "error": "server_busy",
+                    "detail": "Too many concurrent simulations; try again shortly"}
         with tempfile.TemporaryDirectory() as td:
             inp, outp = f"{td}/model.nec", f"{td}/out.txt"
             with open(inp, "w") as f:
                 f.write(sanitized)
             cmd = [NEC_BIN, f"-i{inp}", f"-o{outp}"]
+            exec_started = time.perf_counter()
             p = subprocess.run(cmd, text=True, capture_output=True, timeout=120)
+            exec_ms = (time.perf_counter() - exec_started) * 1000.0
             if p.returncode != 0:
+                _telemetry_complete(
+                    telemetry,
+                    "error",
+                    queue_wait_ms=queue_wait_ms,
+                    exec_ms=exec_ms,
+                    error_type="nec_failed",
+                    detail=p.stderr or p.stdout,
+                )
                 return {"ok": False, "error": "nec_failed", "stderr": p.stderr, "stdout": p.stdout}
             try:
                 with open(outp) as rf:
@@ -1017,14 +1279,35 @@ def run(payload: dict = Body(...)):
                             rf.write(raw)
                 except Exception:
                     pass
-    finally:
-        _sim_semaphore.release()
 
-    result = {"ok": True, "parsed": parse_nec_output(raw, z0=z0)}
-    # Cache successful results
-    if not dump_raw:
-        _cache_put(key, result)
-    return result
+        result = {"ok": True, "parsed": parse_nec_output(raw, z0=z0)}
+        if not dump_raw:
+            _cache_put(key, result)
+        _telemetry_complete(telemetry, "success", queue_wait_ms=queue_wait_ms, exec_ms=exec_ms)
+        return result
+    except subprocess.TimeoutExpired as exc:
+        _telemetry_complete(
+            telemetry,
+            "timeout",
+            queue_wait_ms=queue_wait_ms,
+            exec_ms=exec_ms,
+            error_type="timeout",
+            detail=str(exc),
+        )
+        raise
+    except Exception as exc:
+        _telemetry_complete(
+            telemetry,
+            "error",
+            queue_wait_ms=queue_wait_ms,
+            exec_ms=exec_ms,
+            error_type=type(exc).__name__,
+            detail=str(exc),
+        )
+        raise
+    finally:
+        if acquired:
+            _sim_semaphore.release()
 
 
 @app.post("/currents")
@@ -1034,44 +1317,99 @@ def currents(payload: dict = Body(...)):
     Returns normalized current magnitudes grouped by wire tag, suitable
     for heat-map overlay on a 3D wire model.
     """
-    nec_deck = payload.get("nec_deck") or payload.get("nec") or ""
-    if not nec_deck:
-        return {"ok": False, "error": "missing_nec_deck"}
-
-    sanitized = sanitize_nec(nec_deck)
-
-    key = _cache_key(sanitized, "currents")
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached
-
-    if not _sim_semaphore.acquire(timeout=60):
-        return {"ok": False, "error": "server_busy",
-                "detail": "Too many concurrent simulations; try again shortly"}
+    telemetry = _telemetry_begin("currents")
+    queue_wait_ms = None
+    exec_ms = None
+    acquired = False
     try:
+        nec_deck = payload.get("nec_deck") or payload.get("nec") or ""
+        if not nec_deck:
+            _telemetry_complete(telemetry, "error", error_type="missing_nec_deck")
+            return {"ok": False, "error": "missing_nec_deck"}
+
+        sanitized = sanitize_nec(nec_deck)
+
+        key = _cache_key(sanitized, "currents")
+        cached = _cache_get(key)
+        if cached is not None:
+            _telemetry_complete(telemetry, "success")
+            return cached
+
+        queue_started = time.perf_counter()
+        acquired = _sim_semaphore.acquire(timeout=60)
+        queue_wait_ms = (time.perf_counter() - queue_started) * 1000.0
+        if not acquired:
+            _telemetry_complete(
+                telemetry,
+                "busy",
+                queue_wait_ms=queue_wait_ms,
+                error_type="server_busy",
+                detail="Too many concurrent simulations; try again shortly",
+            )
+            return {"ok": False, "error": "server_busy",
+                    "detail": "Too many concurrent simulations; try again shortly"}
         with tempfile.TemporaryDirectory() as td:
             inp, outp = f"{td}/model.nec", f"{td}/out.txt"
             with open(inp, "w") as f:
                 f.write(sanitized)
             cmd = [NEC_BIN, f"-i{inp}", f"-o{outp}"]
+            exec_started = time.perf_counter()
             p = subprocess.run(cmd, text=True, capture_output=True, timeout=120)
+            exec_ms = (time.perf_counter() - exec_started) * 1000.0
             if p.returncode != 0:
+                _telemetry_complete(
+                    telemetry,
+                    "error",
+                    queue_wait_ms=queue_wait_ms,
+                    exec_ms=exec_ms,
+                    error_type="nec_failed",
+                    detail=p.stderr,
+                )
                 return {"ok": False, "error": "nec_failed", "stderr": p.stderr}
             try:
                 with open(outp) as rf:
                     raw = rf.read()
             except Exception:
                 raw = ""
+
+        parsed = parse_currents(raw)
+        if parsed["n_segments"] == 0:
+            _telemetry_complete(
+                telemetry,
+                "error",
+                queue_wait_ms=queue_wait_ms,
+                exec_ms=exec_ms,
+                error_type="no_currents_found",
+            )
+            return {"ok": False, "error": "no_currents_found"}
+
+        result = {"ok": True, **parsed}
+        _cache_put(key, result)
+        _telemetry_complete(telemetry, "success", queue_wait_ms=queue_wait_ms, exec_ms=exec_ms)
+        return result
+    except subprocess.TimeoutExpired as exc:
+        _telemetry_complete(
+            telemetry,
+            "timeout",
+            queue_wait_ms=queue_wait_ms,
+            exec_ms=exec_ms,
+            error_type="timeout",
+            detail=str(exc),
+        )
+        raise
+    except Exception as exc:
+        _telemetry_complete(
+            telemetry,
+            "error",
+            queue_wait_ms=queue_wait_ms,
+            exec_ms=exec_ms,
+            error_type=type(exc).__name__,
+            detail=str(exc),
+        )
+        raise
     finally:
-        _sim_semaphore.release()
-
-    parsed = parse_currents(raw)
-    if parsed["n_segments"] == 0:
-        return {"ok": False, "error": "no_currents_found"}
-
-    result = {"ok": True, **parsed}
-    _cache_put(key, result)
-    return result
+        if acquired:
+            _sim_semaphore.release()
 
 
 @app.post("/pattern")
@@ -1080,37 +1418,63 @@ def pattern(payload: dict = Body(...)):
     Execute nec2++ with the provided NEC deck and parse far-field pattern data.
     Expects the deck to include an RP card. Returns theta, phi, and gain (dB where available).
     """
-    # Back-compat: allow either raw dict or embedded nec_text
-    if isinstance(payload, dict):
-        nec_text = payload.get('nec_text') if 'nec_text' in payload else payload.get('nec')
-        debug = bool(payload.get('debug') or payload.get('include_raw'))
-    else:
-        nec_text = str(payload)
-        debug = False
-    if not nec_text:
-        return {"ok": False, "error": "missing_nec_text"}
-
-    sanitized = sanitize_nec(nec_text)
-
-    # --- Cache check (skip when debug requested) ---
-    if not debug:
-        key = _cache_key(sanitized, "pattern")
-        cached = _cache_get(key)
-        if cached is not None:
-            return cached
-
-    # --- Semaphore: limit concurrent nec2c processes ---
-    if not _sim_semaphore.acquire(timeout=60):
-        return {"ok": False, "error": "server_busy",
-                "detail": "Too many concurrent simulations; try again shortly"}
+    telemetry = _telemetry_begin("pattern")
+    queue_wait_ms = None
+    exec_ms = None
+    acquired = False
     try:
+        # Back-compat: allow either raw dict or embedded nec_text
+        if isinstance(payload, dict):
+            nec_text = payload.get('nec_text') if 'nec_text' in payload else payload.get('nec')
+            debug = bool(payload.get('debug') or payload.get('include_raw'))
+        else:
+            nec_text = str(payload)
+            debug = False
+        if not nec_text:
+            _telemetry_complete(telemetry, "error", error_type="missing_nec_text")
+            return {"ok": False, "error": "missing_nec_text"}
+
+        sanitized = sanitize_nec(nec_text)
+
+        # --- Cache check (skip when debug requested) ---
+        if not debug:
+            key = _cache_key(sanitized, "pattern")
+            cached = _cache_get(key)
+            if cached is not None:
+                _telemetry_complete(telemetry, "success")
+                return cached
+
+        # --- Semaphore: limit concurrent nec2c processes ---
+        queue_started = time.perf_counter()
+        acquired = _sim_semaphore.acquire(timeout=60)
+        queue_wait_ms = (time.perf_counter() - queue_started) * 1000.0
+        if not acquired:
+            _telemetry_complete(
+                telemetry,
+                "busy",
+                queue_wait_ms=queue_wait_ms,
+                error_type="server_busy",
+                detail="Too many concurrent simulations; try again shortly",
+            )
+            return {"ok": False, "error": "server_busy",
+                    "detail": "Too many concurrent simulations; try again shortly"}
         with tempfile.TemporaryDirectory() as td:
             inp, outp = f"{td}/model.nec", f"{td}/out.txt"
             with open(inp, "w") as f:
                 f.write(sanitized)
             cmd = [NEC_BIN, f"-i{inp}", f"-o{outp}"]
+            exec_started = time.perf_counter()
             p = subprocess.run(cmd, text=True, capture_output=True, timeout=180)
+            exec_ms = (time.perf_counter() - exec_started) * 1000.0
             if p.returncode != 0:
+                _telemetry_complete(
+                    telemetry,
+                    "error",
+                    queue_wait_ms=queue_wait_ms,
+                    exec_ms=exec_ms,
+                    error_type="nec_failed",
+                    detail=p.stderr or p.stdout,
+                )
                 resp = {"ok": False, "error": "nec_failed", "stderr": p.stderr, "stdout": p.stdout}
                 if debug:
                     try:
@@ -1140,50 +1504,71 @@ def pattern(payload: dict = Body(...)):
                             rf.write(raw)
                 except Exception:
                     pass
-    finally:
-        _sim_semaphore.release()
 
-    # Always attempt to parse both pattern and impedance from a single solver run so the
-    # caller can avoid two separate container executions. This unifies the data path for
-    # the NEC JSON Analyzer (pattern + impedance/swr) while remaining backwards compatible
-    # with earlier clients that only consumed pattern arrays.
-    pat = parse_pattern_output(raw)
-    sweep = parse_nec_output(raw)  # may contain empty lists if frequency/Z lines absent
-    if not pat.get("theta"):
-        resp = {"ok": False, "error": "no_pattern_detected"}
+        pat = parse_pattern_output(raw)
+        sweep = parse_nec_output(raw)
+        if not pat.get("theta"):
+            _telemetry_complete(
+                telemetry,
+                "error",
+                queue_wait_ms=queue_wait_ms,
+                exec_ms=exec_ms,
+                error_type="no_pattern_detected",
+            )
+            resp = {"ok": False, "error": "no_pattern_detected"}
+            if debug:
+                try:
+                    lines = raw.splitlines()
+                    hdr_idx = -1
+                    for i, line in enumerate(lines):
+                        u = line.upper()
+                        if 'THETA' in u and 'PHI' in u:
+                            hdr_idx = i
+                            break
+                    window = []
+                    if hdr_idx != -1:
+                        start = max(0, hdr_idx - 5)
+                        end = min(len(lines), hdr_idx + 20)
+                        window = lines[start:end]
+                    resp["raw_header_window"] = "\n".join(window)[-4000:]
+                except Exception:
+                    pass
+            return resp
+        resp = {"ok": True, **pat}
+        if sweep:
+            if sweep.get("impedance_sweep"):
+                resp["impedance_sweep"] = sweep["impedance_sweep"]
+            if sweep.get("swr_sweep"):
+                resp["swr_sweep"] = sweep["swr_sweep"]
         if debug:
-            # Include a small window around any detected header-like lines for troubleshooting
             try:
-                lines = raw.splitlines()
-                hdr_idx = -1
-                for i, line in enumerate(lines):
-                    u = line.upper()
-                    if 'THETA' in u and 'PHI' in u:
-                        hdr_idx = i
-                        break
-                window = []
-                if hdr_idx != -1:
-                    start = max(0, hdr_idx - 5)
-                    end = min(len(lines), hdr_idx + 20)
-                    window = lines[start:end]
-                resp["raw_header_window"] = "\n".join(window)[-4000:]
+                resp["raw_tail"] = raw[-2000:]
             except Exception:
                 pass
+        if not debug:
+            _cache_put(key, resp)
+        _telemetry_complete(telemetry, "success", queue_wait_ms=queue_wait_ms, exec_ms=exec_ms)
         return resp
-    resp = {"ok": True, **pat}
-    # Attach impedance / SWR sweeps when available (even if empty for single-frequency decks)
-    if sweep:
-        if sweep.get("impedance_sweep"):
-            resp["impedance_sweep"] = sweep["impedance_sweep"]
-        if sweep.get("swr_sweep"):
-            resp["swr_sweep"] = sweep["swr_sweep"]
-    if debug:
-        # Attach a brief trailer of raw output for validation
-        try:
-            resp["raw_tail"] = raw[-2000:]
-        except Exception:
-            pass
-    # Cache successful results
-    if not debug:
-        _cache_put(key, resp)
-    return resp
+    except subprocess.TimeoutExpired as exc:
+        _telemetry_complete(
+            telemetry,
+            "timeout",
+            queue_wait_ms=queue_wait_ms,
+            exec_ms=exec_ms,
+            error_type="timeout",
+            detail=str(exc),
+        )
+        raise
+    except Exception as exc:
+        _telemetry_complete(
+            telemetry,
+            "error",
+            queue_wait_ms=queue_wait_ms,
+            exec_ms=exec_ms,
+            error_type=type(exc).__name__,
+            detail=str(exc),
+        )
+        raise
+    finally:
+        if acquired:
+            _sim_semaphore.release()

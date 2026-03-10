@@ -201,6 +201,102 @@ class TestCacheStats:
 
 
 # ---------------------------------------------------------------------------
+# Solver telemetry stats
+# ---------------------------------------------------------------------------
+
+class TestTelemetry:
+    """In-process telemetry helpers for solver observability."""
+
+    def test_summary_defaults(self, api_mod):
+        api_mod._cache_hits = 0
+        api_mod._cache_misses = 0
+        api_mod._telemetry_reset()
+
+        payload = api_mod._telemetry_summary_payload()
+
+        assert payload["ok"] is True
+        assert payload["service"] == "nec-solver"
+        assert payload["solver_binary"] == api_mod.NEC_BIN
+        assert payload["max_concurrent"] == api_mod._MAX_CONCURRENT
+        assert payload["totals"]["requests"] == 0
+        assert payload["totals"]["success"] == 0
+        assert payload["in_flight"] == 0
+        assert payload["cache"]["hit_rate"] == 0.0
+        assert set(payload["endpoints"].keys()) == {"run", "currents", "pattern"}
+
+    def test_success_records_latency_samples(self, api_mod):
+        api_mod._telemetry_reset()
+
+        token = api_mod._telemetry_begin("run")
+        api_mod._telemetry_complete(token, "success", queue_wait_ms=12.5, exec_ms=240.0)
+
+        payload = api_mod._telemetry_summary_payload()
+        run = payload["endpoints"]["run"]
+
+        assert payload["totals"]["requests"] == 1
+        assert payload["totals"]["success"] == 1
+        assert payload["in_flight"] == 0
+        assert run["requests"] == 1
+        assert run["success"] == 1
+        assert run["queue_wait_ms"]["avg"] == pytest.approx(12.5)
+        assert run["exec_ms"]["p95"] == pytest.approx(240.0)
+
+    def test_busy_event_appears_in_recent_payload(self, api_mod):
+        api_mod._telemetry_reset()
+
+        token = api_mod._telemetry_begin("pattern")
+        api_mod._telemetry_complete(
+            token,
+            "busy",
+            queue_wait_ms=60000.0,
+            error_type="server_busy",
+            detail="Too many concurrent simulations; try again shortly",
+        )
+
+        payload = api_mod._telemetry_recent_payload()
+
+        assert len(payload["recent_busy_events"]) == 1
+        assert payload["recent_busy_events"][0]["endpoint"] == "pattern"
+        assert payload["recent_busy_events"][0]["type"] == "server_busy"
+        assert payload["recent_busy_events"][0]["wait_timeout_seconds"] == 60
+
+    def test_error_event_appears_in_recent_payload(self, api_mod):
+        api_mod._telemetry_reset()
+
+        token = api_mod._telemetry_begin("currents")
+        api_mod._telemetry_complete(
+            token,
+            "error",
+            queue_wait_ms=5.0,
+            exec_ms=120.0,
+            error_type="nec_failed",
+            detail="solver returned non-zero exit",
+        )
+
+        summary = api_mod._telemetry_summary_payload()
+        recent = api_mod._telemetry_recent_payload()
+
+        assert summary["totals"]["error"] == 1
+        assert summary["endpoints"]["currents"]["error"] == 1
+        assert len(recent["recent_errors"]) == 1
+        assert recent["recent_errors"][0]["endpoint"] == "currents"
+        assert recent["recent_errors"][0]["type"] == "nec_failed"
+
+    def test_window_counts_include_recent_outcomes(self, api_mod):
+        api_mod._telemetry_reset()
+
+        api_mod._telemetry_complete(api_mod._telemetry_begin("run"), "success")
+        api_mod._telemetry_complete(api_mod._telemetry_begin("run"), "busy", error_type="server_busy")
+        api_mod._telemetry_complete(api_mod._telemetry_begin("run"), "timeout", error_type="timeout")
+
+        payload = api_mod._telemetry_summary_payload()
+
+        assert payload["window"]["last_5m_requests"] == 3
+        assert payload["window"]["last_5m_busy"] == 1
+        assert payload["window"]["last_5m_errors"] == 1
+
+
+# ---------------------------------------------------------------------------
 # Semaphore / concurrency control
 # ---------------------------------------------------------------------------
 
