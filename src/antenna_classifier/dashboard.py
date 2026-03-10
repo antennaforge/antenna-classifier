@@ -23,12 +23,14 @@ from . import classifier, parser, validator
 from .classification_store import (
     ensure_schema as ensure_review_schema,
     get_record as get_review_record,
+    list_type_references,
     merge_review,
     save_review,
     upsert_auto_record,
 )
-from .fingerprint import fingerprint as make_fingerprint
+from .fingerprint import analyze_lpda_fit, fingerprint as make_fingerprint
 from .simulator import simulate, DEFAULT_URL as DEFAULT_SOLVER_URL
+from . import tuning_lab
 
 # ---------------------------------------------------------------------------
 # Lazy import FastAPI so the rest of the package works without it installed
@@ -84,6 +86,15 @@ def create_app(
         cls: Any,
         fp: Any,
     ) -> dict[str, Any]:
+        design_frequencies_mhz: list[float] = []
+        for card in parsed.cards:
+            if card.card_type != "FR":
+                continue
+            freq = card.labeled_params.get("freq")
+            if isinstance(freq, (int, float)) and float(freq) > 0:
+                value = round(float(freq), 6)
+                if value not in design_frequencies_mhz:
+                    design_frequencies_mhz.append(value)
         return {
             "file_key": _file_key_for(path),
             "filename": path.name,
@@ -95,6 +106,9 @@ def create_app(
             "confidence": round(cls.confidence, 2),
             "frequency_mhz": cls.frequency_mhz,
             "band": cls.band,
+            "bands": cls.bands,
+            "is_multiband": cls.is_multiband,
+            "design_frequencies_mhz": design_frequencies_mhz,
             "element_count": cls.element_count,
             "ground_type": cls.ground_type,
             "wire_count": len(parsed.wire_cards),
@@ -107,6 +121,57 @@ def create_app(
             "warnings": len(val.warnings),
         }
 
+    def _annotate_review_queue(record: dict[str, Any]) -> dict[str, Any]:
+        annotated = dict(record)
+        reasons: list[str] = []
+        confidence = float(annotated.get("confidence") or annotated.get("auto_confidence") or 0.0)
+        auto_type = annotated.get("auto_antenna_type") or annotated.get("antenna_type") or "unknown"
+        if not annotated.get("valid"):
+            reasons.append("invalid_model")
+        if auto_type == "unknown":
+            reasons.append("unknown_type")
+        if confidence < 0.75:
+            reasons.append("low_confidence")
+        if (annotated.get("reviewed_antenna_type")
+                and annotated.get("reviewed_antenna_type") != auto_type):
+            reasons.append("review_override")
+
+        priority = 0
+        for reason in reasons:
+            if reason == "unknown_type":
+                priority += 100
+            elif reason == "invalid_model":
+                priority += 80
+            elif reason == "low_confidence":
+                priority += 40
+            elif reason == "review_override":
+                priority += 10
+
+        needs_review = bool(reasons) and not annotated.get("is_reviewed")
+        annotated["review_reasons"] = reasons
+        annotated["review_priority"] = priority
+        annotated["needs_review"] = needs_review
+        return annotated
+
+    def _build_review_queue(include_reviewed: bool = False, limit: int = 25) -> list[dict[str, Any]]:
+        with _catalog_lock:
+            snapshot = list(_catalog)
+        queue = []
+        for rec in snapshot:
+            if not rec.get("review_reasons"):
+                continue
+            if not include_reviewed and not rec.get("needs_review"):
+                continue
+            queue.append(rec)
+        queue.sort(key=lambda rec: (-int(rec.get("review_priority") or 0), rec.get("filename", "")))
+        return queue[:limit]
+
+    def _normalize_tuner_mode(raw: Any) -> str:
+        mode = str(raw or "deterministic").strip().lower()
+        if mode not in {"deterministic", "ga"}:
+            raise HTTPException(400, "tuner_mode must be 'deterministic' or 'ga'")
+        return mode
+
     def _build_merged_record(path: Path) -> dict[str, Any]:
         parsed = parser.parse_file(path)
         val = validator.validate(parsed)
@@ -115,7 +180,7 @@ def create_app(
         auto_record = _build_auto_record(path, parsed, val, cls, fp)
         upsert_auto_record(review_db_path, auto_record)
         stored = get_review_record(review_db_path, auto_record["file_key"])
-        return merge_review(auto_record, stored)
+        return _annotate_review_queue(merge_review(auto_record, stored))
 
     def _update_catalog_record(record: dict[str, Any]) -> None:
         with _catalog_lock:
@@ -169,9 +234,9 @@ def create_app(
     async def index():
         html_path = static_dir / "index.html"
         if html_path.exists():
-            html = html_path.read_text().replace(
-                '"__ROOT_PATH__"', json.dumps(root_path),
-            )
+            html = html_path.read_text()
+            html = html.replace('"__ROOT_PATH__"', json.dumps(root_path))
+            html = html.replace('__ROOT_PATH__', root_path)
             return HTMLResponse(html)
         return HTMLResponse("<h1>Antenna Classifier Dashboard</h1><p>Static files not found.</p>")
 
@@ -180,6 +245,7 @@ def create_app(
         antenna_type: str | None = Query(None),
         valid_only: bool = Query(False),
         band: str | None = Query(None),
+        needs_review: bool = Query(False),
     ):
         with _catalog_lock:
             results = list(_catalog)
@@ -189,6 +255,8 @@ def create_app(
             results = [r for r in results if r.get("antenna_type") == antenna_type]
         if band:
             results = [r for r in results if r.get("band") == band]
+        if needs_review:
+            results = [r for r in results if r.get("needs_review")]
         return JSONResponse({
             "total": len(results),
             "filtered": len(results),
@@ -214,8 +282,20 @@ def create_app(
             "total": len(snapshot),
             "valid": valid_count,
             "invalid": len(snapshot) - valid_count,
+            "needs_review": sum(1 for rec in snapshot if rec.get("needs_review")),
             "types": dict(sorted(type_counts.items(), key=lambda x: -x[1])),
             "bands": dict(sorted(band_counts.items(), key=lambda x: -x[1])),
+        })
+
+    @app.get("/api/review-queue")
+    async def get_review_queue(
+        include_reviewed: bool = Query(False),
+        limit: int = Query(25, ge=1, le=200),
+    ):
+        queue = _build_review_queue(include_reviewed=include_reviewed, limit=limit)
+        return JSONResponse({
+            "total": len(queue),
+            "files": queue,
         })
 
     def _find_nec_file(filename: str) -> Path:
@@ -236,6 +316,7 @@ def create_app(
         parsed = parser.parse_file(p)
         val = validator.validate(parsed)
         base = _build_merged_record(p)
+        lpda_fit = analyze_lpda_fit(parsed)
         _update_catalog_record(base)
 
         # Read raw NEC content (first 200 lines max for display)
@@ -243,6 +324,11 @@ def create_app(
 
         return JSONResponse({
             **base,
+            "lpda_fit": lpda_fit.to_dict() if lpda_fit else None,
+            "reference_catalog": list_type_references(
+                review_db_path,
+                base.get("effective_antenna_type") or base.get("auto_antenna_type") or "unknown",
+            ),
             "nec_content": "\n".join(raw_lines),
             "cards": [
                 {"type": c.card_type, "line": c.line_number, "raw": c.raw}
@@ -262,6 +348,15 @@ def create_app(
         reviewed_type = (body.get("reviewed_antenna_type") or "").strip() or None
         if reviewed_type and reviewed_type not in classifier.ANTENNA_TYPES:
             raise HTTPException(400, f"Unknown antenna type: {reviewed_type}")
+        reference_ids_in = body.get("reference_ids") or []
+        if not isinstance(reference_ids_in, list):
+            raise HTTPException(400, "reference_ids must be a list")
+        reference_ids: list[int] = []
+        for item in reference_ids_in:
+            try:
+                reference_ids.append(int(item))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(400, "reference_ids must contain integers") from exc
 
         references_in = body.get("references") or []
         references: list[dict[str, str]] = []
@@ -287,19 +382,29 @@ def create_app(
         fp = make_fingerprint(parsed)
         auto_record = _build_auto_record(p, parsed, val, cls, fp)
         upsert_auto_record(review_db_path, auto_record)
-        save_review(
-            review_db_path,
-            auto_record["file_key"],
-            reviewed_antenna_type=reviewed_type,
-            reason=str(body.get("reason") or ""),
-            references=references,
-        )
+        effective_type = reviewed_type or auto_record.get("antenna_type") or auto_record.get("auto_antenna_type") or "unknown"
+        try:
+            save_review(
+                review_db_path,
+                auto_record["file_key"],
+                antenna_type=effective_type,
+                reviewed_antenna_type=reviewed_type,
+                reason=str(body.get("reason") or ""),
+                reference_ids=reference_ids,
+                references=references,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         updated = merge_review(auto_record, get_review_record(review_db_path, auto_record["file_key"]))
         _update_catalog_record(updated)
 
         raw_lines = p.read_text(errors="replace").splitlines()[:200]
         return JSONResponse({
             **updated,
+            "reference_catalog": list_type_references(
+                review_db_path,
+                updated.get("effective_antenna_type") or updated.get("auto_antenna_type") or "unknown",
+            ),
             "nec_content": "\n".join(raw_lines),
             "cards": [
                 {"type": c.card_type, "line": c.line_number, "raw": c.raw}
@@ -310,6 +415,13 @@ def create_app(
                 for i in val.issues
             ],
             "evidence": updated.get("evidence", []),
+        })
+
+    @app.get("/api/reference-catalog")
+    async def get_reference_catalog(antenna_type: str = Query(..., min_length=1)):
+        return JSONResponse({
+            "antenna_type": antenna_type,
+            "references": list_type_references(review_db_path, antenna_type),
         })
 
     @app.get("/api/geometry/{filename:path}")
@@ -357,6 +469,55 @@ def create_app(
         result = simulate_currents(p, base_url=solver_url)
         return JSONResponse(result)
 
+    @app.get("/api/tuning-lab/exercises")
+    async def get_tuning_lab_exercises():
+        return JSONResponse({"exercises": tuning_lab.list_exercises()})
+
+    @app.get("/api/tuning-lab/exercises/{exercise_id}")
+    async def get_tuning_lab_exercise_detail(exercise_id: str):
+        try:
+            return JSONResponse(tuning_lab.get_exercise(exercise_id))
+        except KeyError as exc:
+            raise HTTPException(404, f"Unknown tuning exercise: {exercise_id}") from exc
+
+    @app.post("/api/tuning-lab/exercises/{exercise_id}/simulate")
+    async def run_tuning_lab_exercise(exercise_id: str, request: "Request"):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        values = body.get("values") if isinstance(body, dict) else None
+        if values is not None and not isinstance(values, dict):
+            raise HTTPException(400, "values must be an object")
+        try:
+            payload = tuning_lab.simulate_exercise(exercise_id, values or {}, base_url=solver_url)
+        except KeyError as exc:
+            raise HTTPException(404, f"Unknown tuning exercise: {exercise_id}") from exc
+        return JSONResponse(payload)
+
+    @app.post("/api/tuning-lab/exercises/{exercise_id}/geometry")
+    async def get_tuning_lab_geometry(exercise_id: str, request: "Request"):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        values = body.get("values") if isinstance(body, dict) else None
+        if values is not None and not isinstance(values, dict):
+            raise HTTPException(400, "values must be an object")
+        try:
+            payload = tuning_lab.exercise_geometry(exercise_id, values or {})
+        except KeyError as exc:
+            raise HTTPException(404, f"Unknown tuning exercise: {exercise_id}") from exc
+        return JSONResponse(payload)
+
+    @app.post("/api/tuning-lab/exercises/{exercise_id}/pattern")
+    async def get_tuning_lab_pattern(exercise_id: str, request: "Request", type: str = "elevation"):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        values = body.get("values") if isinstance(body, dict) else None
+        if values is not None and not isinstance(values, dict):
+            raise HTTPException(400, "values must be an object")
+        if type not in ("elevation", "azimuth"):
+            raise HTTPException(400, f"Invalid pattern type: {type}")
+        try:
+            payload = tuning_lab.exercise_pattern(exercise_id, values or {}, pattern_type=type, base_url=solver_url)
+        except KeyError as exc:
+            raise HTTPException(404, f"Unknown tuning exercise: {exercise_id}") from exc
+        return JSONResponse(payload)
+
     @app.get("/api/types")
     async def get_types():
         """List all known antenna types."""
@@ -386,6 +547,7 @@ def create_app(
             "user_id": int(uid),
             "callsign": request.headers.get("X-HF-Callsign", ""),
             "ai_enabled": request.headers.get("X-HF-AI-Enabled") == "1",
+            "is_admin": request.headers.get("X-HF-Is-Admin") == "1",
         }
 
     @app.get("/api/me")
@@ -460,6 +622,7 @@ def create_app(
         frequency_mhz = float(body.get("frequency_mhz", 14.0))
         ground_type = body.get("ground_type", "free_space")
         description = body.get("description", "")
+        tuner_mode = _normalize_tuner_mode(body.get("tuner_mode"))
 
         if not name:
             raise HTTPException(400, "Name is required")
@@ -471,6 +634,7 @@ def create_app(
                 ground_type=ground_type,
                 description=description,
                 pipeline=True,
+                tuner_mode=tuner_mode,
             )
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
@@ -507,6 +671,7 @@ def create_app(
                 "iterations": result.get("iterations"),
                 "classified_type": result.get("classified_type"),
                 "confidence": result.get("confidence"),
+                "tuner_mode": tuner_mode,
                 "refinement_log": result.get("refinement_log"),
                 "steps": result.get("steps"),
                 "goal_verdict": result.get("goal_verdict"),
@@ -545,6 +710,7 @@ def create_app(
         frequency_mhz = float(body.get("frequency_mhz", 14.0))
         ground_type = body.get("ground_type", "free_space")
         description = body.get("description", "")
+        tuner_mode = _normalize_tuner_mode(body.get("tuner_mode"))
         if not name:
             raise HTTPException(400, "Name is required")
 
@@ -575,6 +741,7 @@ def create_app(
                     ground_type=ground_type,
                     description=description,
                     pipeline=True,
+                    tuner_mode=tuner_mode,
                     on_step=_on_step,
                 )
                 q.put({"_result": result})
@@ -634,6 +801,7 @@ def create_app(
                                 "iterations": result.get("iterations"),
                                 "classified_type": result.get("classified_type"),
                                 "confidence": result.get("confidence"),
+                                "tuner_mode": tuner_mode,
                                 "refinement_log": result.get("refinement_log"),
                                 "steps": result.get("steps"),
                                 "goal_verdict": result.get("goal_verdict"),
@@ -754,6 +922,7 @@ def create_app(
         name = form.get("name", "").strip() or "PDF Upload"
         extra = form.get("description", "").strip()
         hint_type = form.get("antenna_type", "").strip()
+        tuner_mode = _normalize_tuner_mode(form.get("tuner_mode"))
 
         pdf_bytes = await pdf_file.read()
         if len(pdf_bytes) > 10 * 1024 * 1024:
@@ -762,7 +931,8 @@ def create_app(
         try:
             result = generate_nec_from_pdf(pdf_bytes, extra_instructions=extra,
                                            antenna_type=hint_type,
-                                           pipeline=True)
+                                           pipeline=True,
+                                           tuner_mode=tuner_mode)
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
         except ValueError as exc:
@@ -807,6 +977,7 @@ def create_app(
                 "iterations": result.get("iterations"),
                 "classified_type": result.get("classified_type"),
                 "confidence": result.get("confidence"),
+                "tuner_mode": tuner_mode,
                 "refinement_log": result.get("refinement_log"),
                 "steps": result.get("steps"),
                 "goal_verdict": result.get("goal_verdict"),
@@ -837,6 +1008,7 @@ def create_app(
         name = form.get("name", "").strip() or "PDF Upload"
         extra = form.get("description", "").strip()
         hint_type = form.get("antenna_type", "").strip()
+        tuner_mode = _normalize_tuner_mode(form.get("tuner_mode"))
 
         pdf_bytes = await pdf_file.read()
         if len(pdf_bytes) > 10 * 1024 * 1024:
@@ -868,6 +1040,7 @@ def create_app(
                     extra_instructions=extra,
                     antenna_type=hint_type,
                     pipeline=True,
+                    tuner_mode=tuner_mode,
                     on_step=_on_step,
                 )
                 q.put({"_result": result})
@@ -932,6 +1105,7 @@ def create_app(
                                 "iterations": result.get("iterations"),
                                 "classified_type": result.get("classified_type"),
                                 "confidence": result.get("confidence"),
+                                "tuner_mode": tuner_mode,
                                 "refinement_log": result.get("refinement_log"),
                                 "steps": result.get("steps"),
                                 "goal_verdict": result.get("goal_verdict"),
@@ -980,11 +1154,13 @@ def create_app(
         name = body.get("name", "").strip() or "URL Import"
         extra = body.get("description", "").strip()
         hint_type = body.get("antenna_type", "").strip()
+        tuner_mode = _normalize_tuner_mode(body.get("tuner_mode"))
 
         try:
             result = generate_nec_from_url(url, extra_instructions=extra,
                                            antenna_type=hint_type,
-                                           pipeline=True)
+                                           pipeline=True,
+                                           tuner_mode=tuner_mode)
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
         except ValueError as exc:
@@ -1028,6 +1204,7 @@ def create_app(
                 "iterations": result.get("iterations"),
                 "classified_type": result.get("classified_type"),
                 "confidence": result.get("confidence"),
+                "tuner_mode": tuner_mode,
                 "refinement_log": result.get("refinement_log"),
                 "steps": result.get("steps"),
                 "goal_verdict": result.get("goal_verdict"),
@@ -1062,6 +1239,7 @@ def create_app(
         name = body.get("name", "").strip() or "URL Import"
         extra = body.get("description", "").strip()
         hint_type = body.get("antenna_type", "").strip()
+        tuner_mode = _normalize_tuner_mode(body.get("tuner_mode"))
 
         q: queue.Queue[dict | None] = queue.Queue()
         q.put({
@@ -1089,6 +1267,7 @@ def create_app(
                     extra_instructions=extra,
                     antenna_type=hint_type,
                     pipeline=True,
+                    tuner_mode=tuner_mode,
                     on_step=_on_step,
                 )
                 q.put({"_result": result})
@@ -1154,6 +1333,7 @@ def create_app(
                                 "iterations": result.get("iterations"),
                                 "classified_type": result.get("classified_type"),
                                 "confidence": result.get("confidence"),
+                                "tuner_mode": tuner_mode,
                                 "refinement_log": result.get("refinement_log"),
                                 "steps": result.get("steps"),
                                 "goal_verdict": result.get("goal_verdict"),
@@ -1192,6 +1372,8 @@ def create_app(
             raise HTTPException(401, "Authentication required")
         if not hf_user["ai_enabled"]:
             raise HTTPException(403, "AI features not enabled for your account. Contact admin.")
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        tuner_mode = _normalize_tuner_mode(body.get("tuner_mode"))
 
         # Good types for surprise — types that reliably produce working NEC
         # HF-only pool (10 m – 160 m)
@@ -1235,6 +1417,7 @@ def create_app(
                 ground_type="free_space",
                 description=f"Classic {nice_name} — surprise design!",
                 pipeline=True,
+                tuner_mode=tuner_mode,
             )
         except RuntimeError as exc:
             raise HTTPException(503, str(exc))
@@ -1270,6 +1453,7 @@ def create_app(
                 "iterations": result.get("iterations"),
                 "classified_type": result.get("classified_type"),
                 "confidence": result.get("confidence"),
+                "tuner_mode": tuner_mode,
                 "refinement_log": result.get("refinement_log"),
                 "steps": result.get("steps"),
                 "goal_verdict": result.get("goal_verdict"),

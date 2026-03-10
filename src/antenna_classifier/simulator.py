@@ -30,6 +30,7 @@ class SWRSweep:
     freq_mhz: list[float] = field(default_factory=list)
     swr: list[float] = field(default_factory=list)
     z0: float = 50.0
+    design_freq_mhz: float | None = None
 
     @property
     def min_swr(self) -> float:
@@ -54,6 +55,69 @@ class SWRSweep:
         if len(in_band) < 2:
             return None
         return max(in_band) - min(in_band)
+
+    @property
+    def dips(self) -> list[dict[str, float | bool | None]]:
+        """Local SWR minima across the sweep, sorted by lowest SWR first."""
+        finite = [
+            (index, float(freq), float(swr))
+            for index, (freq, swr) in enumerate(zip(self.freq_mhz, self.swr))
+            if math.isfinite(freq) and math.isfinite(swr)
+        ]
+        if not finite:
+            return []
+
+        dips: list[dict[str, float | bool | None]] = []
+        if len(finite) == 1:
+            _, freq, swr = finite[0]
+            dips.append({
+                "freq_mhz": freq,
+                "swr": swr,
+                "distance_from_design_mhz": abs(freq - self.design_freq_mhz) if self.design_freq_mhz is not None else None,
+                "is_global_min": True,
+                "is_nearest_design": True,
+            })
+            return dips
+
+        for position, (index, freq, swr) in enumerate(finite):
+            prev_swr = finite[position - 1][2] if position > 0 else None
+            next_swr = finite[position + 1][2] if position < len(finite) - 1 else None
+            if prev_swr is None or next_swr is None:
+                continue
+            if swr <= prev_swr and swr <= next_swr and (swr < prev_swr or swr < next_swr):
+                dips.append({
+                    "freq_mhz": freq,
+                    "swr": swr,
+                    "distance_from_design_mhz": abs(freq - self.design_freq_mhz) if self.design_freq_mhz is not None else None,
+                })
+
+        if not dips:
+            best_freq = self.resonant_freq
+            best_swr = self.min_swr
+            if best_freq is not None and math.isfinite(best_swr):
+                dips.append({
+                    "freq_mhz": float(best_freq),
+                    "swr": float(best_swr),
+                    "distance_from_design_mhz": abs(best_freq - self.design_freq_mhz) if self.design_freq_mhz is not None else None,
+                })
+
+        global_min = self.min_swr
+        nearest_design_index = None
+        if self.design_freq_mhz is not None and dips:
+            nearest_design_index = min(
+                range(len(dips)),
+                key=lambda idx: (
+                    float(dips[idx].get("distance_from_design_mhz") or 0.0),
+                    float(dips[idx].get("swr") or float("inf")),
+                ),
+            )
+
+        for idx, dip in enumerate(dips):
+            dip["is_global_min"] = math.isfinite(global_min) and abs(float(dip["swr"]) - global_min) < 1e-9
+            dip["is_nearest_design"] = nearest_design_index == idx if nearest_design_index is not None else False
+
+        dips.sort(key=lambda dip: (float(dip["swr"]), float(dip.get("distance_from_design_mhz") or 0.0)))
+        return dips
 
 
 @dataclass
@@ -127,9 +191,20 @@ class SimulationResult:
                 "freq_mhz": self.swr.freq_mhz,
                 "swr": [_s(v) for v in self.swr.swr],
                 "z0": self.swr.z0,
+                "design_freq_mhz": self.swr.design_freq_mhz,
                 "min_swr": _s(self.swr.min_swr),
                 "resonant_freq_mhz": self.swr.resonant_freq,
                 "bandwidth_2to1_mhz": self.swr.bandwidth_2to1,
+                "dips": [
+                    {
+                        "freq_mhz": _s(float(dip["freq_mhz"])),
+                        "swr": _s(float(dip["swr"])),
+                        "distance_from_design_mhz": _s(float(dip["distance_from_design_mhz"])) if dip.get("distance_from_design_mhz") is not None else None,
+                        "is_global_min": bool(dip.get("is_global_min")),
+                        "is_nearest_design": bool(dip.get("is_nearest_design")),
+                    }
+                    for dip in self.swr.dips
+                ],
             }
         if self.impedance:
             d["impedance_sweep"] = {
@@ -237,8 +312,9 @@ def simulate_currents(
 _RP_CARDS = {
     # Elevation cut at phi=0: theta -90..90 in 1° steps
     "elevation": "RP 0 181 1 1000 -90 0 1 0",
-    # Azimuth cut at theta near horizon: phi 0..360 in 1° steps
-    "azimuth": "RP 0 1 361 1000 90 0 0 1",
+    # Azimuth cut just above the horizon: phi 0..360 in 1° steps.
+    # Using exactly 90° produces invalid gains for some ground-coupled horizontal antennas.
+    "azimuth": "RP 0 1 361 1000 89 0 0 1",
     # Full 3D hemisphere: theta 0..90, phi 0..360 in 2° steps
     "full": "RP 0 46 181 1000 0 0 2 2",
 }
@@ -429,6 +505,7 @@ def simulate_sweep(
         freq_mhz=swr_data.get("freq_mhz", []),
         swr=swr_data.get("swr", []),
         z0=z0,
+        design_freq_mhz=center_freq,
     ) if swr_data.get("freq_mhz") else None
 
     impedance = ImpedanceSweep(

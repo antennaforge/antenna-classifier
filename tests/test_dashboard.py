@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from antenna_classifier.dashboard import create_app
+from antenna_classifier import tuning_lab
 
 # We need httpx for the async TestClient
 pytest.importorskip("httpx")
@@ -47,12 +48,23 @@ YAGI_NEC = textwrap.dedent("""\
     EN
 """)
 
+MULTIBAND_NEC = textwrap.dedent("""\
+    CM Two-band dipole
+    GW 1 21 0 -5.0 0 0 5.0 0 0.001
+    GE 0
+    EX 0 1 11 0 1 0
+    FR 0 1 0 0 14.15
+    FR 0 1 0 0 28.5
+    EN
+""")
+
 
 @pytest.fixture()
 def nec_dir(tmp_path: Path) -> Path:
     """Create a temporary directory with two NEC files."""
     (tmp_path / "dipole.nec").write_text(DIPOLE_NEC)
     (tmp_path / "yagi.nec").write_text(YAGI_NEC)
+    (tmp_path / "multiband.nec").write_text(MULTIBAND_NEC)
     return tmp_path
 
 
@@ -84,9 +96,9 @@ class TestCatalog:
         resp = client.get("/api/catalog")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] == 2
+        assert data["total"] == 3
         filenames = {f["filename"] for f in data["files"]}
-        assert filenames == {"dipole.nec", "yagi.nec"}
+        assert filenames == {"dipole.nec", "yagi.nec", "multiband.nec"}
 
     def test_loading_flag_false_when_complete(self, client: TestClient):
         resp = client.get("/api/catalog")
@@ -127,12 +139,13 @@ class TestSummary:
         assert "valid" in data
         assert "types" in data
         assert "bands" in data
-        assert data["total"] == 2
+        assert "needs_review" in data
+        assert data["total"] == 3
 
     def test_summary_type_counts(self, client: TestClient):
         data = client.get("/api/summary").json()
         # At least some type should have > 0 count
-        assert sum(data["types"].values()) == 2
+        assert sum(data["types"].values()) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +164,16 @@ class TestFileDetail:
         assert data["valid"] is True
         assert "auto_antenna_type" in data
         assert "fingerprint_details" in data
+        assert "lpda_fit" in data
+        assert data["lpda_fit"] is None
+
+    def test_multiband_file_detail_includes_design_frequencies(self, client: TestClient):
+        resp = client.get("/api/file/multiband.nec")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["is_multiband"] is True
+        assert data["bands"] == ["20m", "10m"]
+        assert data["design_frequencies_mhz"] == [14.15, 28.5]
 
     def test_file_not_found(self, client: TestClient):
         resp = client.get("/api/file/nonexistent.nec")
@@ -199,6 +222,130 @@ class TestTypes:
         assert "yagi" in types
         assert "dipole" in types
         assert "unknown" in types
+
+
+class TestProxyAuthIdentity:
+    def test_api_me_reports_anonymous_without_proxy_headers(self, client: TestClient):
+        resp = client.get("/api/me")
+        assert resp.status_code == 200
+        assert resp.json() == {"authenticated": False}
+
+    def test_api_me_preserves_admin_state_from_proxy_headers(self, client: TestClient):
+        resp = client.get(
+            "/api/me",
+            headers={
+                "X-HF-User-Id": "7",
+                "X-HF-Callsign": "KQ4ZGQ",
+                "X-HF-AI-Enabled": "1",
+                "X-HF-Is-Admin": "1",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "authenticated": True,
+            "user_id": 7,
+            "callsign": "KQ4ZGQ",
+            "ai_enabled": True,
+            "is_admin": True,
+        }
+
+
+class TestTuningLab:
+    def test_lists_tuning_lab_exercises(self, client: TestClient):
+        resp = client.get("/api/tuning-lab/exercises")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert {item["id"] for item in data["exercises"]} == {
+            "dipole-basics",
+            "vertical-match",
+            "yagi-driven-element",
+        }
+
+    def test_get_tuning_lab_exercise_detail(self, client: TestClient):
+        resp = client.get("/api/tuning-lab/exercises/dipole-basics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["title"] == "Dipole Resonance Basics"
+        assert data["equations"][0]["expression"] == "Z = R + jX"
+        assert len(data["controls"]) == 3
+
+    def test_simulate_tuning_lab_exercise(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(
+            tuning_lab,
+            "simulate_exercise",
+            lambda exercise_id, values, base_url: {
+                "exercise": {"id": exercise_id, "title": "Stub"},
+                "current_values": values,
+                "reference_values": {"length_scale": 1.0},
+                "current": {
+                    "ok": True,
+                    "swr_sweep": {"freq_mhz": [14.0, 14.2], "swr": [1.6, 1.3]},
+                    "impedance_sweep": {"freq_mhz": [14.0, 14.2], "r": [45.0, 50.0], "x": [8.0, 0.0]},
+                    "analysis": {"reactive_state": "near resonance", "guidance": []},
+                    "geometry_cards": [],
+                },
+                "reference": {
+                    "ok": True,
+                    "swr_sweep": {"freq_mhz": [14.0, 14.2], "swr": [1.4, 1.1]},
+                    "impedance_sweep": {"freq_mhz": [14.0, 14.2], "r": [48.0, 50.0], "x": [4.0, 0.0]},
+                    "analysis": {"reactive_state": "near resonance", "guidance": []},
+                    "geometry_cards": [],
+                },
+            },
+        )
+
+        resp = client.post(
+            "/api/tuning-lab/exercises/dipole-basics/simulate",
+            json={"values": {"length_scale": 1.01}},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["exercise"]["id"] == "dipole-basics"
+        assert data["current_values"]["length_scale"] == 1.01
+        assert data["current"]["analysis"]["reactive_state"] == "near resonance"
+
+    def test_get_tuning_lab_geometry(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(
+            tuning_lab,
+            "exercise_geometry",
+            lambda exercise_id, values: {
+                "wires": [{"tag": 1, "points": [[0, 0, 0], [0, 0, 5]], "radius": 0.001, "segments": 21}],
+                "ground_type": "perfect",
+                "bounds": {"min": [0, 0, 0], "max": [1, 1, 5]},
+            },
+        )
+
+        resp = client.post(
+            "/api/tuning-lab/exercises/vertical-match/geometry",
+            json={"values": {"radiator_scale": 1.0}},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ground_type"] == "perfect"
+        assert data["bounds"]["max"][2] == 5
+
+    def test_get_tuning_lab_pattern(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(
+            tuning_lab,
+            "exercise_pattern",
+            lambda exercise_id, values, pattern_type, base_url: {
+                "ok": True,
+                "radiation_pattern": {
+                    "theta": [0, 45, 90],
+                    "phi": [0, 0, 0],
+                    "gain_db": [1.0, 4.0, 2.0],
+                },
+            },
+        )
+
+        resp = client.post(
+            "/api/tuning-lab/exercises/yagi-driven-element/pattern?type=elevation",
+            json={"values": {"driven_scale": 1.0}},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["radiation_pattern"]["theta"][1] == 45
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +419,47 @@ class TestClassificationReview:
         assert data["review_reason"] == "manual correction after geometry review"
         assert data["references"][0]["url"] == "https://example.com/reference"
 
+    def test_reference_catalog_lists_type_references(self, client: TestClient):
+        client.post(
+            "/api/review/yagi.nec",
+            json={
+                "reviewed_antenna_type": "yagi",
+                "reason": "seed yagi reference catalog",
+                "references": ["https://example.com/yagi-reference"],
+            },
+        )
+        resp = client.get("/api/reference-catalog?antenna_type=yagi")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["antenna_type"] == "yagi"
+        assert any(ref["url"] == "https://example.com/yagi-reference" for ref in data["references"])
+
+    def test_save_review_accepts_catalog_reference_ids(self, client: TestClient):
+        client.post(
+            "/api/review/yagi.nec",
+            json={
+                "reviewed_antenna_type": "yagi",
+                "reason": "seed yagi reference catalog",
+                "references": ["https://example.com/yagi-reference"],
+            },
+        )
+        catalog = client.get("/api/reference-catalog?antenna_type=yagi").json()
+        ref_id = catalog["references"][0]["id"]
+
+        resp = client.post(
+            "/api/review/yagi.nec",
+            json={
+                "reviewed_antenna_type": "yagi",
+                "reason": "picked from catalog",
+                "reference_ids": [ref_id],
+                "references": [],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["references"][0]["reference_id"] == ref_id
+        assert data["references"][0]["url"] == "https://example.com/yagi-reference"
+
     def test_catalog_uses_reviewed_type(self, client: TestClient):
         client.post(
             "/api/review/yagi.nec",
@@ -302,6 +490,41 @@ class TestClassificationReview:
             json={"reviewed_antenna_type": "definitely_not_a_real_type"},
         )
         assert resp.status_code == 400
+
+    def test_invalid_reference_id_rejected(self, client: TestClient):
+        resp = client.post(
+            "/api/review/yagi.nec",
+            json={"reference_ids": [999999]},
+        )
+        assert resp.status_code == 400
+
+
+class TestReviewQueue:
+    def test_review_queue_lists_invalid_models_first(self, client: TestClient, nec_dir: Path):
+        invalid_file = nec_dir / "broken.nec"
+        invalid_file.write_text("CM broken\nGW 1 1 0 0 0 0 0 0 0.001\nEN\n")
+        client.post("/api/reload")
+        for _ in range(50):
+            resp = client.get("/api/catalog")
+            data = resp.json()
+            if not data.get("loading"):
+                break
+            time.sleep(0.05)
+
+        queue = client.get("/api/review-queue?limit=10")
+        assert queue.status_code == 200
+        data = queue.json()
+        assert data["total"] >= 1
+        first = data["files"][0]
+        assert first["filename"] == "broken.nec"
+        assert first["needs_review"] is True
+        assert "invalid_model" in first["review_reasons"]
+
+    def test_catalog_needs_review_filter(self, client: TestClient):
+        resp = client.get("/api/catalog?needs_review=true")
+        assert resp.status_code == 200
+        for record in resp.json()["files"]:
+            assert record["needs_review"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +623,39 @@ class TestHTMLRegressions:
         assert "renderFileList(catalog)" not in body, (
             "refreshCatalog must NOT call renderFileList(catalog) — bypasses filters"
         )
+
+    def test_load_catalog_reads_review_queue_response(self, html: str):
+        idx = html.find("async function loadCatalog")
+        assert idx != -1, "loadCatalog function not found"
+        body = html[idx:idx + 1000]
+        assert "const [catResp, sumResp, queueResp" in body
+        assert "reviewQueue = queueResp.files || []" in body
+        assert "tuningLabExercises = labResp.exercises || []" in body
+
+    def test_review_filter_option_present(self, html: str):
+        assert '<option value="needs_review">Needs review</option>' in html
+
+    def test_tuner_mode_selector_present(self, html: str):
+        assert 'id="create-tuner-mode"' in html
+        assert 'Seeded GA' in html
+
+    def test_create_flows_include_tuner_mode(self, html: str):
+        assert 'tuner_mode: _getSelectedTunerMode()' in html
+        assert "fd.append('tuner_mode', _getSelectedTunerMode())" in html
+
+    def test_review_reference_catalog_ui_present(self, html: str):
+        assert 'id="review-reference-options"' in html
+        assert 'reference_ids: referenceIds' in html
+        assert 'api/reference-catalog?antenna_type=' in html
+
+    def test_workspace_mode_shell_present(self, html: str):
+        assert 'id="app-container"' in html
+        assert "setWorkspaceMode('browse')" in html
+        assert 'id="workspace-tab-lab" onclick="openTuningLab()"' in html
+
+    def test_lab_results_pane_is_side_by_side(self, html: str):
+        assert 'class="lab-stage"' in html
+        assert 'class="lab-results-pane"' in html
 
     def test_degenerate_gain_check_in_force_pattern(self, html: str):
         """forcePattern must guard against degenerate gain data (all -999.99).

@@ -37,7 +37,7 @@ class TestInjectRP:
         GE 0
         EX 0 1 11 0 1 0
         FR 0 1 0 0 14.15
-        RP 0 1 361 1000 90 0 0 1
+        RP 0 1 361 1000 89 0 0 1
         EN
     """).strip()
 
@@ -56,7 +56,7 @@ class TestInjectRP:
         GE 0
         EX 0 1 11 0 1 0
         FR 0 1 0 0 14.15
-        RP 0 1 361 1000 90 0 0 1
+        RP 0 1 361 1000 89 0 0 1
         RP 0 181 1 1000 -90 0 1 0
         EN
     """).strip()
@@ -107,7 +107,7 @@ class TestBuildSweepDeck:
         GE 0
         EX 0 1 11 0 1 0
         FR 0 1 0 0 14.15
-        RP 0 1 361 1000 90 0 0 1
+        RP 0 1 361 1000 89 0 0 1
         EN
     """).strip()
 
@@ -183,6 +183,17 @@ class TestSWRSweep:
         assert sweep.resonant_freq is None
         assert sweep.bandwidth_2to1 is None
 
+    def test_dips_reports_local_minima(self):
+        sweep = SWRSweep(
+            freq_mhz=[28.0, 28.5, 29.0, 29.5, 30.0, 30.5, 31.0],
+            swr=[3.0, 1.8, 2.6, 1.4, 1.9, 1.2, 2.2],
+            design_freq_mhz=29.0,
+        )
+        dips = sweep.dips
+        assert len(dips) == 3
+        assert dips[0]["freq_mhz"] == pytest.approx(30.5)
+        assert any(dip["is_nearest_design"] for dip in dips)
+
 
 # ---------------------------------------------------------------------------
 # RadiationPattern dataclass
@@ -227,13 +238,22 @@ class TestSimulationResultSerialization:
         import json
         result = SimulationResult(
             filename="test.nec", ok=True,
-            swr=SWRSweep(freq_mhz=[14.0, 14.15], swr=[2.5, float("inf")]),
+            swr=SWRSweep(freq_mhz=[14.0, 14.15], swr=[2.5, float("inf")], design_freq_mhz=14.15),
             impedance=ImpedanceSweep(freq_mhz=[14.0], r=[50.0], x=[10.0]),
             pattern=RadiationPattern(theta=[0, 90], phi=[0, 0], gain_db=[5.0, 2.0]),
         )
         d = result.to_dict()
         serialized = json.dumps(d)
         assert isinstance(serialized, str)
+
+    def test_swr_design_frequency_serialized(self):
+        result = SimulationResult(
+            filename="test.nec", ok=True,
+            swr=SWRSweep(freq_mhz=[28.0, 28.5, 29.0], swr=[2.0, 1.5, 2.5], design_freq_mhz=28.5),
+        )
+        d = result.to_dict()
+        assert d["swr_sweep"]["design_freq_mhz"] == pytest.approx(28.5)
+        assert d["swr_sweep"]["dips"][0]["freq_mhz"] == pytest.approx(28.5)
 
     def test_error_result_dict(self):
         result = SimulationResult(filename="bad.nec", ok=False, error="timeout")
