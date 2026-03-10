@@ -182,6 +182,14 @@ class TestTunerFiresYagi:
         if report.evals_used > 1:
             assert len(report.adjustments) > 0, "Should have recorded adjustments"
 
+    def test_yagi_ga_mode_runs_with_solver(self):
+        deck = _offtune_yagi_3el(freq_mhz=28.5)
+        _, report = tune_deck(deck, "yagi", 28.5, mode="ga", max_evals=8)
+        assert report.mode == "ga"
+        assert report.evals_used >= 2
+        assert report.final_swr <= report.initial_swr + 0.5
+        assert any("GA refinement" in step for step in report.adjustments) or "GA skipped" in report.detail
+
 
 @solver
 class TestTunerFiresDipole:

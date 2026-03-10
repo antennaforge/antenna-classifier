@@ -19,6 +19,44 @@ from .parser import ParseResult, NECCard
 
 
 @dataclass(frozen=True)
+class LPDAFit:
+    """Reverse-fit summary for LPDA-like element progressions."""
+
+    element_count: int
+    boom_axis: str
+    order: str
+    fitted_tau: float
+    fitted_sigma: float
+    monotonic_lengths: bool
+    monotonic_spacings: bool
+    mean_length_error_pct: float
+    max_length_error_pct: float
+    mean_spacing_error_pct: float
+    max_spacing_error_pct: float
+    conforms: bool
+    element_lengths: list[float] = field(default_factory=list)
+    element_spacings: list[float] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "element_count": self.element_count,
+            "boom_axis": self.boom_axis,
+            "order": self.order,
+            "fitted_tau": round(self.fitted_tau, 4),
+            "fitted_sigma": round(self.fitted_sigma, 4),
+            "monotonic_lengths": self.monotonic_lengths,
+            "monotonic_spacings": self.monotonic_spacings,
+            "mean_length_error_pct": round(self.mean_length_error_pct, 2),
+            "max_length_error_pct": round(self.max_length_error_pct, 2),
+            "mean_spacing_error_pct": round(self.mean_spacing_error_pct, 2),
+            "max_spacing_error_pct": round(self.max_spacing_error_pct, 2),
+            "conforms": self.conforms,
+            "element_lengths": [round(v, 6) for v in self.element_lengths],
+            "element_spacings": [round(v, 6) for v in self.element_spacings],
+        }
+
+
+@dataclass(frozen=True)
 class Fingerprint:
     """Immutable structural fingerprint of a NEC file."""
 
@@ -285,6 +323,176 @@ def fingerprint(parsed: ParseResult) -> Fingerprint:
         complexity_score=complexity_score,
         feed_complexity=feed_complexity,
     )
+
+
+def analyze_lpda_fit(parsed: ParseResult) -> LPDAFit | None:
+    r"""Reverse-fit NEC geometry against the LPDA calculator progression.
+
+    This checks whether the file's measured element lengths and boom spacings
+    are consistent with a single $\tau$ / $\sigma$ LPDA progression.
+    """
+    groups = _collect_horizontal_wire_groups(parsed)
+    if len(groups) < 4:
+        return None
+
+    boom_idx = max(
+        range(3),
+        key=lambda idx: max(g["centroid"][idx] for g in groups) - min(g["centroid"][idx] for g in groups),
+    )
+    boom_axis = "xyz"[boom_idx]
+
+    fits = [
+        _fit_lpda_direction(groups, boom_idx, boom_axis, reverse=False),
+        _fit_lpda_direction(groups, boom_idx, boom_axis, reverse=True),
+    ]
+    fits = [fit for fit in fits if fit is not None]
+    if not fits:
+        return None
+    return min(fits, key=_lpda_fit_score)
+
+
+def _collect_horizontal_wire_groups(parsed: ParseResult) -> list[dict[str, Any]]:
+    tag_map: dict[int, list[NECCard]] = {}
+    for card in parsed.cards:
+        if card.card_type != "GW":
+            continue
+        tag = card.labeled_params.get("tag")
+        if isinstance(tag, int):
+            tag_map.setdefault(tag, []).append(card)
+
+    groups: list[dict[str, Any]] = []
+    for tag, wires in sorted(tag_map.items()):
+        total_length = 0.0
+        xs: list[float] = []
+        ys: list[float] = []
+        zs: list[float] = []
+        sum_x = 0.0
+        sum_y = 0.0
+        sum_z = 0.0
+        n_midpoints = 0
+        horiz = 0.0
+        vert = 0.0
+        for wire in wires:
+            lp = wire.labeled_params
+            coords = [lp.get(k) for k in ("x1", "y1", "z1", "x2", "y2", "z2")]
+            if not all(isinstance(v, (int, float)) for v in coords):
+                continue
+            x1, y1, z1, x2, y2, z2 = [float(v) for v in coords]
+            xs.extend((x1, x2))
+            ys.extend((y1, y2))
+            zs.extend((z1, z2))
+            total_length += math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2 + (z2 - z1) ** 2)
+            sum_x += (x1 + x2) / 2.0
+            sum_y += (y1 + y2) / 2.0
+            sum_z += (z1 + z2) / 2.0
+            n_midpoints += 1
+            horiz += math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+            vert += abs(z2 - z1)
+        if total_length <= 0 or n_midpoints == 0:
+            continue
+        if horiz <= vert * 1.5:
+            continue
+        groups.append(
+            {
+                "tag": tag,
+                "length": total_length,
+                "centroid": (sum_x / n_midpoints, sum_y / n_midpoints, sum_z / n_midpoints),
+                "span": (
+                    (max(xs) - min(xs)) if xs else 0.0,
+                    (max(ys) - min(ys)) if ys else 0.0,
+                    (max(zs) - min(zs)) if zs else 0.0,
+                ),
+            }
+        )
+    return groups
+
+
+def _fit_lpda_direction(
+    groups: list[dict[str, Any]],
+    boom_idx: int,
+    boom_axis: str,
+    *,
+    reverse: bool,
+) -> LPDAFit | None:
+    ordered = sorted(groups, key=lambda group: group["centroid"][boom_idx], reverse=reverse)
+    lengths = [float(group["length"]) for group in ordered]
+    positions = [float(group["centroid"][boom_idx]) for group in ordered]
+    spacings = [abs(positions[i + 1] - positions[i]) for i in range(len(positions) - 1)]
+    if len(lengths) < 4 or any(length <= 0 for length in lengths) or any(spacing <= 0 for spacing in spacings):
+        return None
+
+    growth_terms = [
+        math.log(lengths[index] / lengths[0]) / index
+        for index in range(1, len(lengths))
+        if lengths[index] > 0 and lengths[0] > 0
+    ]
+    if not growth_terms:
+        return None
+    gamma = sum(growth_terms) / len(growth_terms)
+    tau = math.exp(-gamma)
+    if not math.isfinite(tau) or tau <= 0:
+        return None
+
+    ideal_lengths = [lengths[0] / (tau ** index) for index in range(len(lengths))]
+    sigma_terms = [
+        spacings[index] / (2.0 * ideal_lengths[index + 1])
+        for index in range(len(spacings))
+        if ideal_lengths[index + 1] > 0
+    ]
+    if not sigma_terms:
+        return None
+    sigma = sum(sigma_terms) / len(sigma_terms)
+    if not math.isfinite(sigma) or sigma <= 0:
+        return None
+    ideal_spacings = [2.0 * sigma * ideal_lengths[index + 1] for index in range(len(spacings))]
+
+    length_errors = [abs(actual - expected) / expected for actual, expected in zip(lengths, ideal_lengths) if expected > 0]
+    spacing_errors = [abs(actual - expected) / expected for actual, expected in zip(spacings, ideal_spacings) if expected > 0]
+    if not length_errors or not spacing_errors:
+        return None
+
+    monotonic_lengths = all(lengths[i] <= lengths[i + 1] for i in range(len(lengths) - 1))
+    monotonic_spacings = all(spacings[i] <= spacings[i + 1] for i in range(len(spacings) - 1))
+    conforms = (
+        monotonic_lengths
+        and monotonic_spacings
+        and 0.80 <= tau <= 0.98
+        and 0.02 <= sigma <= 0.12
+        and (sum(length_errors) / len(length_errors)) <= 0.08
+        and max(length_errors) <= 0.15
+        and (sum(spacing_errors) / len(spacing_errors)) <= 0.12
+        and max(spacing_errors) <= 0.20
+    )
+
+    return LPDAFit(
+        element_count=len(lengths),
+        boom_axis=boom_axis,
+        order="descending" if reverse else "ascending",
+        fitted_tau=tau,
+        fitted_sigma=sigma,
+        monotonic_lengths=monotonic_lengths,
+        monotonic_spacings=monotonic_spacings,
+        mean_length_error_pct=100.0 * (sum(length_errors) / len(length_errors)),
+        max_length_error_pct=100.0 * max(length_errors),
+        mean_spacing_error_pct=100.0 * (sum(spacing_errors) / len(spacing_errors)),
+        max_spacing_error_pct=100.0 * max(spacing_errors),
+        conforms=conforms,
+        element_lengths=lengths,
+        element_spacings=spacings,
+    )
+
+
+def _lpda_fit_score(fit: LPDAFit) -> float:
+    penalty = 0.0
+    if not fit.monotonic_lengths:
+        penalty += 1000.0
+    if not fit.monotonic_spacings:
+        penalty += 500.0
+    if not 0.80 <= fit.fitted_tau <= 0.98:
+        penalty += 100.0
+    if not 0.02 <= fit.fitted_sigma <= 0.12:
+        penalty += 100.0
+    return penalty + fit.mean_length_error_pct + fit.mean_spacing_error_pct
 
 
 # ---------------------------------------------------------------------------

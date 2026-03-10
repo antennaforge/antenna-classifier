@@ -1183,6 +1183,7 @@ def generate_nec_from_form(
     model: str = "gpt-5.2",
     json_mode: bool = False,
     pipeline: bool = False,
+    tuner_mode: str = "",
     on_step: Any | None = None,
 ) -> dict[str, Any]:
     """Generate a NEC file from structured form data.
@@ -1203,6 +1204,7 @@ def generate_nec_from_form(
             ground_type=ground_type,
             description=description,
             model=model,
+            tuner_mode=tuner_mode,
             on_step=on_step,
         )
         result = pr.to_dict()
@@ -1281,6 +1283,7 @@ def generate_nec_from_pdf(
     antenna_type: str = "",
     json_mode: bool = False,
     pipeline: bool = False,
+    tuner_mode: str = "",
     on_step: Any | None = None,
 ) -> dict[str, Any]:
     """Extract text from a PDF and ask the model to produce a NEC file.
@@ -1299,6 +1302,7 @@ def generate_nec_from_pdf(
             antenna_type=antenna_type,
             model=model,
             extra_instructions=extra_instructions,
+            tuner_mode=tuner_mode,
             on_step=on_step,
         )
         result = pr.to_dict()
@@ -1474,6 +1478,7 @@ def generate_nec_from_url(
     antenna_type: str = "",
     json_mode: bool = False,
     pipeline: bool = False,
+    tuner_mode: str = "",
     on_step: Any | None = None,
 ) -> dict[str, Any]:
     """Fetch a web page, extract text, and produce a NEC file via AI.
@@ -1492,6 +1497,7 @@ def generate_nec_from_url(
             antenna_type=antenna_type,
             model=model,
             extra_instructions=extra_instructions,
+            tuner_mode=tuner_mode,
             on_step=on_step,
         )
         result = pr.to_dict()

@@ -87,6 +87,31 @@ def _lpda_nec() -> str:
     return "\n".join(lines)
 
 
+def _hybrid_log_orr_single_tl_nec() -> str:
+    """Progressive-length array with only one TL link: not strict enough for LPDA."""
+    return (
+        "CM log-Orr 10m\n"
+        "CE\n"
+        "GW 1,21,-2.809013,0.,0.,2.711731,0.,0.,.00635\n"
+        "GW 2,21,-2.359084,.7539341,0.,2.359084,.7539341,0.,.00635\n"
+        "GW 3,21,-2.1402,1.775393,0.,2.1402,1.775393,0.,.00635\n"
+        "GW 4,21,-2.371244,3.575107,0.,2.371244,3.575107,0.,.00635\n"
+        "GW 5,21,-2.334764,6.080114,0.,2.334764,6.080114,0.,.00635\n"
+        "GE 0\n"
+        "LD 5,1,0,0,2.5E+07,1.\n"
+        "LD 5,2,0,0,2.5E+07,1.\n"
+        "LD 5,3,0,0,2.5E+07,1.\n"
+        "LD 5,4,0,0,2.5E+07,1.\n"
+        "LD 5,5,0,0,2.5E+07,1.\n"
+        "FR 0,1,0,0,28.5\n"
+        "GN -1\n"
+        "EX 0,3,11,0,1.414214,0.\n"
+        "TL 2,11,3,11,-150.,0.,0.,0.,0.,0.\n"
+        "RP 0,1,361,1000,90.,0.,0.,1.,0.\n"
+        "EN\n"
+    )
+
+
 def _patch_nec() -> str:
     return (
         "CM Microstrip patch\n"
@@ -234,6 +259,11 @@ class TestStructuralClassification:
         result = classify(parse_text(_phased_nec()))
         assert result.antenna_type == "phased_array"
         assert result.confidence >= 0.5
+
+    def test_lpda_requires_multi_link_feed_network(self):
+        result = classify(parse_text(_hybrid_log_orr_single_tl_nec()))
+        assert result.antenna_type != "lpda"
+        assert not any("progressive lengths" in evidence for evidence in result.evidence)
 
 
 # ---------------------------------------------------------------------------

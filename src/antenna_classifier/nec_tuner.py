@@ -26,8 +26,9 @@ from __future__ import annotations
 import copy
 import logging
 import math
-import tempfile
 import os
+import random
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -50,12 +51,15 @@ class TuneReport:
     """Result of a deterministic tuning pass."""
     success: bool = False
     evals_used: int = 0
+    mode: str = "deterministic"
     initial_swr: float = float("inf")
     final_swr: float = float("inf")
     initial_r: float = 0.0
     final_r: float = 0.0
     initial_x: float = 0.0
     final_x: float = 0.0
+    final_gain_dbi: float = 0.0
+    final_front_to_back_db: float = 0.0
     adjustments: list[str] = field(default_factory=list)
     detail: str = ""
 
@@ -370,6 +374,190 @@ def _extract_swr_r_x(sim: dict[str, Any], freq_mhz: float) -> tuple[float, float
     return swr, r_val, x_val
 
 
+def _extract_gain_fb(sim: dict[str, Any]) -> tuple[float, float]:
+    """Extract peak gain and front-to-back ratio from simulation output."""
+    pattern = sim.get("radiation_pattern") or {}
+    gain = pattern.get("max_gain_dbi")
+    front_to_back = pattern.get("front_to_back_db")
+    return float(gain or 0.0), float(front_to_back or 0.0)
+
+
+def _multi_objective_cost(sim: dict[str, Any], freq_mhz: float) -> tuple[float, float, float, float, float, float]:
+    """Score a simulation on SWR, feed impedance, gain, and front-to-back."""
+    swr, r_val, x_val = _extract_swr_r_x(sim, freq_mhz)
+    gain_dbi, front_to_back_db = _extract_gain_fb(sim)
+    clipped_swr = min(swr, 20.0) if math.isfinite(swr) else 20.0
+    cost = (
+        clipped_swr * 14.0
+        + abs(r_val - 50.0) * 0.10
+        + abs(x_val) * 0.05
+        - gain_dbi * 0.9
+        - front_to_back_db * 0.35
+    )
+    return cost, swr, r_val, x_val, gain_dbi, front_to_back_db
+
+
+def _role_groups_for_scaling(deck: dict[str, Any]) -> list[tuple[str, list[WireInfo]]]:
+    """Return tunable wire groups in reflector/driven/director order."""
+    wires = _classify_wires(deck)
+    if len(wires) < 2:
+        return []
+    roles = _identify_roles_with_deck(wires, deck)
+    groups: list[tuple[str, list[WireInfo]]] = []
+    for role in ("reflector", "driven", "director"):
+        if roles[role]:
+            groups.append((role, roles[role]))
+    return groups
+
+
+def _apply_group_scales(
+    deck: dict[str, Any],
+    groups: list[tuple[str, list[WireInfo]]],
+    scales: tuple[float, ...],
+) -> dict[str, Any]:
+    """Scale each wire-role group by the corresponding factor."""
+    tuned = copy.deepcopy(deck)
+    for (_, wires), scale in zip(groups, scales, strict=False):
+        if abs(scale - 1.0) < 1e-9:
+            continue
+        tuned = _scale_wire_group(tuned, wires, scale)
+    return tuned
+
+
+def _clamp_scale(scale: float) -> float:
+    return max(0.90, min(1.10, scale))
+
+
+def _mutate_scales(
+    parent_a: tuple[float, ...],
+    parent_b: tuple[float, ...],
+    rng: random.Random,
+) -> tuple[float, ...]:
+    child: list[float] = []
+    for scale_a, scale_b in zip(parent_a, parent_b, strict=False):
+        midpoint = (scale_a + scale_b) / 2.0
+        jitter = rng.uniform(-0.02, 0.02)
+        child.append(_clamp_scale(midpoint + jitter))
+    return tuple(child)
+
+
+def _tune_deck_ga(
+    deck: dict[str, Any],
+    antenna_type: str,
+    freq_mhz: float,
+    *,
+    max_evals: int,
+    swr_target: float,
+    r_range: tuple[float, float],
+) -> tuple[dict[str, Any], TuneReport]:
+    """Run a small seeded GA after the deterministic tuner establishes a baseline."""
+    if max_evals <= 1:
+        return tune_deck(
+            deck,
+            antenna_type,
+            freq_mhz,
+            max_evals=max_evals,
+            swr_target=swr_target,
+            r_range=r_range,
+            mode="deterministic",
+        )
+
+    seed_budget = max(1, min(max_evals - 1, max(1, max_evals // 2)))
+    seed_deck, seed_report = tune_deck(
+        deck,
+        antenna_type,
+        freq_mhz,
+        max_evals=seed_budget,
+        swr_target=swr_target,
+        r_range=r_range,
+        mode="deterministic",
+    )
+    seed_report.mode = "ga"
+    groups = _role_groups_for_scaling(seed_deck)
+    if not groups or seed_report.evals_used >= max_evals:
+        if seed_report.detail:
+            seed_report.detail += " | GA skipped: insufficient remaining budget or tunable groups"
+        else:
+            seed_report.detail = "GA skipped: insufficient remaining budget or tunable groups"
+        return seed_deck, seed_report
+
+    remaining_budget = max_evals - seed_report.evals_used
+    rng = random.Random(f"{antenna_type}:{freq_mhz:.6f}")
+    population: list[tuple[float, ...]] = [tuple(1.0 for _ in groups)]
+    population.extend(
+        tuple(_clamp_scale(1.0 + delta if idx == role_idx else 1.0) for idx in range(len(groups)))
+        for role_idx in range(len(groups))
+        for delta in (-0.025, 0.025)
+    )
+    population = population[: max(4, min(remaining_budget, 8))]
+
+    evals_used = seed_report.evals_used
+    best_deck = seed_deck
+    best_metrics = (
+        seed_report.final_swr,
+        seed_report.final_r,
+        seed_report.final_x,
+        seed_report.final_gain_dbi,
+        seed_report.final_front_to_back_db,
+    )
+    best_cost = float("inf")
+    visited: set[tuple[float, ...]] = set()
+
+    while remaining_budget > 0 and population:
+        scored: list[tuple[float, tuple[float, ...], dict[str, Any], tuple[float, float, float, float, float]]] = []
+        next_population: list[tuple[float, ...]] = []
+        for scales in population:
+            if scales in visited:
+                continue
+            visited.add(scales)
+            candidate = _apply_group_scales(seed_deck, groups, scales)
+            sim = _sim_deck(candidate)
+            evals_used += 1
+            remaining_budget -= 1
+            if sim is None or not sim.get("ok", False):
+                continue
+            cost, swr, r_val, x_val, gain_dbi, front_to_back_db = _multi_objective_cost(sim, freq_mhz)
+            metrics = (swr, r_val, x_val, gain_dbi, front_to_back_db)
+            scored.append((cost, scales, candidate, metrics))
+            if cost < best_cost:
+                best_cost = cost
+                best_deck = candidate
+                best_metrics = metrics
+            if remaining_budget <= 0:
+                break
+
+        if not scored or remaining_budget <= 0:
+            break
+
+        scored.sort(key=lambda item: item[0])
+        elites = scored[: min(3, len(scored))]
+        next_population.extend(scale for _, scale, _, _ in elites)
+        while remaining_budget > 0 and len(next_population) < max(4, len(population)):
+            parent_a = elites[rng.randrange(len(elites))][1]
+            parent_b = elites[rng.randrange(len(elites))][1]
+            next_population.append(_mutate_scales(parent_a, parent_b, rng))
+        population = next_population
+
+    final_swr, final_r, final_x, final_gain, final_fb = best_metrics
+    seed_report.evals_used = evals_used
+    seed_report.final_swr = final_swr
+    seed_report.final_r = final_r
+    seed_report.final_x = final_x
+    seed_report.final_gain_dbi = final_gain
+    seed_report.final_front_to_back_db = final_fb
+    seed_report.success = final_swr <= swr_target and r_range[0] <= final_r <= r_range[1]
+    seed_report.adjustments.append(
+        f"GA refinement: SWR={final_swr:.2f}, R={final_r:.1f}, X={final_x:.1f}, "
+        f"gain={final_gain:.2f} dBi, F/B={final_fb:.2f} dB"
+    )
+    seed_report.detail = (
+        f"Seeded GA tuning in {evals_used} evaluations: "
+        f"SWR {seed_report.initial_swr:.2f} → {final_swr:.2f}, "
+        f"gain {final_gain:.2f} dBi, F/B {final_fb:.2f} dB"
+    )
+    return best_deck, seed_report
+
+
 # ── Main tuning loop ──────────────────────────────────────────────
 
 def tune_deck(
@@ -380,6 +568,7 @@ def tune_deck(
     max_evals: int = _MAX_EVALS,
     swr_target: float = _SWR_TARGET,
     r_range: tuple[float, float] = _R_TARGET,
+    mode: str = "deterministic",
 ) -> tuple[dict[str, Any], TuneReport]:
     """Deterministically tune element lengths to minimize SWR.
 
@@ -395,7 +584,17 @@ def tune_deck(
        b. Scale directors to bring R into range
        c. Fine-tune driven again for final SWR
     """
-    report = TuneReport()
+    if mode == "ga":
+        return _tune_deck_ga(
+            deck,
+            antenna_type,
+            freq_mhz,
+            max_evals=max_evals,
+            swr_target=swr_target,
+            r_range=r_range,
+        )
+
+    report = TuneReport(mode=mode)
     deck = copy.deepcopy(deck)
     evals = 0
 
@@ -411,9 +610,12 @@ def tune_deck(
         return deck, report
 
     swr, r_val, x_val = _extract_swr_r_x(sim, freq_mhz)
+    gain_dbi, front_to_back_db = _extract_gain_fb(sim)
     report.initial_swr = swr
     report.initial_r = r_val
     report.initial_x = x_val
+    report.final_gain_dbi = gain_dbi
+    report.final_front_to_back_db = front_to_back_db
     log.info("Tuner baseline: SWR=%.2f, R=%.1f, X=%.1f", swr, r_val, x_val)
 
     if swr <= swr_target and r_range[0] <= r_val <= r_range[1]:
@@ -421,6 +623,8 @@ def tune_deck(
         report.final_swr = swr
         report.final_r = r_val
         report.final_x = x_val
+        report.final_gain_dbi = gain_dbi
+        report.final_front_to_back_db = front_to_back_db
         report.evals_used = evals
         report.detail = "Already meets goals"
         return deck, report

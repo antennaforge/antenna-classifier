@@ -256,6 +256,8 @@ class _AnalysisContext:
         self.ground_label: str = "free_space"
         self.ex_tags: list[int] = []
         self.has_tl: bool = False
+        self.tl_count: int = 0
+        self.tl_tags: set[int] = set()
         self.has_helix: bool = False
         self.has_surface_patch: bool = False
         self.all_frequencies: list[float] = []
@@ -330,7 +332,19 @@ class _AnalysisContext:
                     self.ex_tags.append(tag)
 
         # Transmission lines
-        self.has_tl = any(c.card_type == "TL" for c in self.parsed.cards)
+        self.tl_count = 0
+        self.tl_tags = set()
+        for card in self.parsed.cards:
+            if card.card_type != "TL":
+                continue
+            self.tl_count += 1
+            tag1 = card.labeled_params.get("tag1")
+            tag2 = card.labeled_params.get("tag2")
+            if isinstance(tag1, int):
+                self.tl_tags.add(tag1)
+            if isinstance(tag2, int):
+                self.tl_tags.add(tag2)
+        self.has_tl = self.tl_count > 0
 
         # Helix cards
         self.has_helix = any(c.card_type == "GH" for c in self.parsed.cards)
@@ -628,10 +642,14 @@ def _classify_lpda(ctx: _AnalysisContext, result: ClassificationResult) -> None:
         negative = sum(1 for d in diffs if d < 0)
         monotonic_ratio = max(positive, negative) / len(diffs) if diffs else 0
 
-        if monotonic_ratio > 0.7 and ctx.has_tl:
+        has_lpda_feed_network = ctx.tl_count >= 2 and len(ctx.tl_tags) >= 3
+        if monotonic_ratio > 0.7 and has_lpda_feed_network:
             result.antenna_type = "lpda"
             result.confidence = max(result.confidence, 0.7)
-            result.evidence.append(f"{len(horizontal_groups)} elements with progressive lengths + TL feed")
+            result.evidence.append(
+                f"{len(horizontal_groups)} elements with progressive lengths + "
+                f"{ctx.tl_count} TL links spanning {len(ctx.tl_tags)} elements"
+            )
 
 
 def _classify_vertical(ctx: _AnalysisContext, result: ClassificationResult) -> None:

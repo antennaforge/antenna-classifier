@@ -23,6 +23,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -1440,6 +1441,7 @@ def run_pipeline(
     model: str = _ENGINEERING_MODEL,
     classify_model: str = _COMPREHENSION_MODEL,
     max_retries: int = _MAX_PIPELINE_RETRIES,
+    tuner_mode: str = "",
     on_step: Any | None = None,
 ) -> PipelineResult:
     """Run the full 7-step NEC generation pipeline.
@@ -1705,16 +1707,21 @@ def run_pipeline(
             if (sim_ok and not goal_ok
                     and is_tunable(concepts.antenna_type)
                     and deck):
+                active_tuner_mode = tuner_mode.strip().lower() or os.getenv("ANTENNA_TUNER_MODE", "deterministic").strip().lower() or "deterministic"
                 log.info("Step 6b: attempting deterministic tuning for %s",
                          concepts.antenna_type)
                 tuned_deck, tune_report = _tune_deck(
-                    deck, concepts.antenna_type, concepts.freq_mhz,
+                    deck,
+                    concepts.antenna_type,
+                    concepts.freq_mhz,
+                    mode=active_tuner_mode,
                 )
                 _emit(StepLog(
                     step=6, name="tune",
                     status="ok" if tune_report.success else "fail",
                     detail=tune_report.detail,
                     data={
+                        "mode": tune_report.mode,
                         "evals_used": tune_report.evals_used,
                         "initial_swr": tune_report.initial_swr,
                         "final_swr": tune_report.final_swr,

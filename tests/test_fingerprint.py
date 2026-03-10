@@ -8,6 +8,7 @@ from antenna_classifier.fingerprint import (
     FEATURE_NAMES,
     ArchetypeProfile,
     Fingerprint,
+    analyze_lpda_fit,
     build_archetype,
     classify_by_fingerprint,
     find_similar,
@@ -76,6 +77,48 @@ def _tl_fed() -> str:
     )
 
 
+def _calculator_lpda() -> str:
+    lengths = [2.0]
+    tau = 0.92
+    sigma = 0.05
+    for _ in range(4):
+        lengths.append(lengths[-1] / tau)
+    positions = [0.0]
+    for index in range(len(lengths) - 1):
+        positions.append(positions[-1] + 2 * sigma * lengths[index + 1])
+    lines = ["CM calculator-like LPDA"]
+    for tag, (y_pos, length) in enumerate(zip(positions, lengths), start=1):
+        half = length / 2.0
+        lines.append(f"GW {tag} 21 {-half:.6f} {y_pos:.6f} 0 {half:.6f} {y_pos:.6f} 0 0.001")
+    lines.extend([
+        "GE 0",
+        "TL 1 11 2 11 300.0",
+        "TL 2 11 3 11 300.0",
+        "TL 3 11 4 11 300.0",
+        "TL 4 11 5 11 300.0",
+        "EX 0 1 11 0 1 0",
+        "FR 0 1 0 0 100.0",
+        "EN",
+    ])
+    return "\n".join(lines)
+
+
+def _hybrid_lpda_candidate() -> str:
+    return (
+        "CM hybrid log periodic candidate\n"
+        "GW 1 21 -2.809013 0 0 2.711731 0 0 0.00635\n"
+        "GW 2 21 -2.359084 0.7539341 0 2.359084 0.7539341 0 0.00635\n"
+        "GW 3 21 -2.1402 1.775393 0 2.1402 1.775393 0 0.00635\n"
+        "GW 4 21 -2.371244 3.575107 0 2.371244 3.575107 0 0.00635\n"
+        "GW 5 21 -2.334764 6.080114 0 2.334764 6.080114 0 0.00635\n"
+        "GE 0\n"
+        "TL 2 11 3 11 -150.0\n"
+        "EX 0 3 11 0 1 0\n"
+        "FR 0 1 0 0 28.5\n"
+        "EN\n"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fingerprint generation
 # ---------------------------------------------------------------------------
@@ -118,6 +161,20 @@ class TestFingerprint:
         fp = fingerprint(parse_text(_helix()))
         assert fp.has_helix is True
         assert fp.n_gh == 1
+
+    def test_lpda_reverse_fit_accepts_calculator_geometry(self):
+        fit = analyze_lpda_fit(parse_text(_calculator_lpda()))
+        assert fit is not None
+        assert fit.conforms is True
+        assert fit.fitted_tau == pytest.approx(0.92, abs=0.01)
+        assert fit.fitted_sigma == pytest.approx(0.05, abs=0.01)
+
+    def test_lpda_reverse_fit_rejects_hybrid_geometry(self):
+        fit = analyze_lpda_fit(parse_text(_hybrid_lpda_candidate()))
+        assert fit is not None
+        assert fit.conforms is False
+        assert fit.monotonic_lengths is False
+        assert fit.max_spacing_error_pct > 20.0
 
     def test_loading_detected(self):
         fp = fingerprint(parse_text(_loaded_vertical()))

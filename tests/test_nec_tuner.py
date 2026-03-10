@@ -14,6 +14,7 @@ from antenna_classifier.nec_tuner import (
     WireInfo,
     _classify_wires,
     _cost,
+    _extract_gain_fb,
     _extract_swr_r_x,
     _find_excitation_tag,
     _identify_roles_with_deck,
@@ -238,6 +239,23 @@ class TestExtractSWR:
         assert x == 0.0
 
 
+class TestExtractGainFb:
+    def test_extracts_pattern_metrics(self):
+        gain, front_to_back = _extract_gain_fb({
+            "radiation_pattern": {
+                "max_gain_dbi": 7.2,
+                "front_to_back_db": 18.5,
+            },
+        })
+        assert gain == 7.2
+        assert front_to_back == 18.5
+
+    def test_missing_pattern_metrics_default_zero(self):
+        gain, front_to_back = _extract_gain_fb({})
+        assert gain == 0.0
+        assert front_to_back == 0.0
+
+
 # ── Tunability check ──────────────────────────────────────────────
 
 class TestIsTunable:
@@ -260,7 +278,7 @@ class TestIsTunable:
 # ── tune_deck with mocked solver ──────────────────────────────────
 
 class TestTuneDeckMocked:
-    def _mock_sim_result(self, swr=1.5, r=50.0, x=0.0, ok=True):
+    def _mock_sim_result(self, swr=1.5, r=50.0, x=0.0, ok=True, gain=6.0, front_to_back=12.0):
         return {
             "ok": ok,
             "swr_sweep": {
@@ -274,6 +292,10 @@ class TestTuneDeckMocked:
                 "r": [r * 0.9, r, r * 1.1],
                 "x": [x - 5, x, x + 5],
                 "z0": 50.0,
+            },
+            "radiation_pattern": {
+                "max_gain_dbi": gain,
+                "front_to_back_db": front_to_back,
             },
         }
 
@@ -333,3 +355,24 @@ class TestTuneDeckMocked:
         # Should have made progress
         assert report.evals_used > 1
         assert report.final_swr <= report.initial_swr
+
+    @patch("antenna_classifier.nec_tuner._sim_deck")
+    def test_ga_mode_uses_seeded_refinement(self, mock_sim):
+        results = [
+            self._mock_sim_result(swr=4.2, r=22.0, x=-45.0, gain=5.0, front_to_back=9.0),
+            self._mock_sim_result(swr=2.1, r=46.0, x=-8.0, gain=6.0, front_to_back=13.0),
+            self._mock_sim_result(swr=1.7, r=49.0, x=-2.0, gain=7.8, front_to_back=18.0),
+            self._mock_sim_result(swr=1.9, r=48.0, x=-4.0, gain=7.2, front_to_back=16.0),
+            self._mock_sim_result(swr=1.8, r=47.5, x=-3.0, gain=7.4, front_to_back=17.0),
+        ]
+        mock_sim.side_effect = lambda _deck: results.pop(0) if results else self._mock_sim_result()
+
+        deck = _yagi_deck()
+        tuned, report = tune_deck(deck, "yagi", 28.5, mode="ga", max_evals=5)
+
+        assert report.mode == "ga"
+        assert report.evals_used == 5
+        assert report.final_swr <= 1.9
+        assert report.final_gain_dbi >= 7.2
+        assert report.final_front_to_back_db >= 16.0
+        assert any("GA refinement" in step for step in report.adjustments)
