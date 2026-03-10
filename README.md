@@ -1,4 +1,12 @@
-# antenna-classifier
+# antenna-classifier (ARCHIVED)
+
+> **This repository has been archived.** All code has been merged into the
+> [hamfeeds](https://github.com/antennaforge/hamfeeds) monorepo under
+> `services/antenna_classifier/`. Future development happens there.
+>
+> See [hamfeeds PR: Monorepo Migration](https://github.com/antennaforge/hamfeeds/commit/9d1c912) for details.
+
+---
 
 NEC file parser, validator, and antenna type classifier. Scans collections of NEC
 antenna model files, validates that they parse correctly, and classifies each by
