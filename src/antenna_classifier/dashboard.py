@@ -18,7 +18,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from . import classifier, parser, validator
+from . import classifier, parser, tuning_lab, validator
 from .fingerprint import fingerprint as make_fingerprint
 from .simulator import simulate, DEFAULT_URL as DEFAULT_SOLVER_URL
 
@@ -120,9 +120,9 @@ def create_app(
     async def index():
         html_path = static_dir / "index.html"
         if html_path.exists():
-            html = html_path.read_text().replace(
-                '"__ROOT_PATH__"', json.dumps(root_path),
-            )
+            html = html_path.read_text()
+            html = html.replace('"__ROOT_PATH__"', json.dumps(root_path))
+            html = html.replace('__ROOT_PATH__', root_path)
             return HTMLResponse(html)
         return HTMLResponse("<h1>Antenna Classifier Dashboard</h1><p>Static files not found.</p>")
 
@@ -276,6 +276,55 @@ def create_app(
         result = simulate_currents(p, base_url=solver_url)
         return JSONResponse(result)
 
+    @app.get("/api/tuning-lab/exercises")
+    async def get_tuning_lab_exercises():
+        return JSONResponse({"exercises": tuning_lab.list_exercises()})
+
+    @app.get("/api/tuning-lab/exercises/{exercise_id}")
+    async def get_tuning_lab_exercise_detail(exercise_id: str):
+        try:
+            return JSONResponse(tuning_lab.get_exercise(exercise_id))
+        except KeyError as exc:
+            raise HTTPException(404, f"Unknown tuning exercise: {exercise_id}") from exc
+
+    @app.post("/api/tuning-lab/exercises/{exercise_id}/simulate")
+    async def run_tuning_lab_exercise(exercise_id: str, request: "Request"):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        values = body.get("values") if isinstance(body, dict) else None
+        if values is not None and not isinstance(values, dict):
+            raise HTTPException(400, "values must be an object")
+        try:
+            payload = tuning_lab.simulate_exercise(exercise_id, values or {}, base_url=solver_url)
+        except KeyError as exc:
+            raise HTTPException(404, f"Unknown tuning exercise: {exercise_id}") from exc
+        return JSONResponse(payload)
+
+    @app.post("/api/tuning-lab/exercises/{exercise_id}/geometry")
+    async def get_tuning_lab_geometry(exercise_id: str, request: "Request"):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        values = body.get("values") if isinstance(body, dict) else None
+        if values is not None and not isinstance(values, dict):
+            raise HTTPException(400, "values must be an object")
+        try:
+            payload = tuning_lab.exercise_geometry(exercise_id, values or {})
+        except KeyError as exc:
+            raise HTTPException(404, f"Unknown tuning exercise: {exercise_id}") from exc
+        return JSONResponse(payload)
+
+    @app.post("/api/tuning-lab/exercises/{exercise_id}/pattern")
+    async def get_tuning_lab_pattern(exercise_id: str, request: "Request", type: str = "elevation"):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        values = body.get("values") if isinstance(body, dict) else None
+        if values is not None and not isinstance(values, dict):
+            raise HTTPException(400, "values must be an object")
+        if type not in ("elevation", "azimuth"):
+            raise HTTPException(400, f"Invalid pattern type: {type}")
+        try:
+            payload = tuning_lab.exercise_pattern(exercise_id, values or {}, pattern_type=type, base_url=solver_url)
+        except KeyError as exc:
+            raise HTTPException(404, f"Unknown tuning exercise: {exercise_id}") from exc
+        return JSONResponse(payload)
+
     @app.get("/api/types")
     async def get_types():
         """List all known antenna types."""
@@ -305,6 +354,7 @@ def create_app(
             "user_id": int(uid),
             "callsign": request.headers.get("X-HF-Callsign", ""),
             "ai_enabled": request.headers.get("X-HF-AI-Enabled") == "1",
+            "is_admin": request.headers.get("X-HF-Is-Admin") == "1",
         }
 
     @app.get("/api/me")

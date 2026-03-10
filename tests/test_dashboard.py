@@ -197,6 +197,32 @@ class TestTypes:
         assert "unknown" in types
 
 
+class TestProxyAuthIdentity:
+    def test_api_me_reports_anonymous_without_proxy_headers(self, client: TestClient):
+        resp = client.get("/api/me")
+        assert resp.status_code == 200
+        assert resp.json() == {"authenticated": False}
+
+    def test_api_me_preserves_admin_state_from_proxy_headers(self, client: TestClient):
+        resp = client.get(
+            "/api/me",
+            headers={
+                "X-HF-User-Id": "7",
+                "X-HF-Callsign": "KQ4ZGQ",
+                "X-HF-AI-Enabled": "1",
+                "X-HF-Is-Admin": "1",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "authenticated": True,
+            "user_id": 7,
+            "callsign": "KQ4ZGQ",
+            "ai_enabled": True,
+            "is_admin": True,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Pattern endpoint validation
 # ---------------------------------------------------------------------------

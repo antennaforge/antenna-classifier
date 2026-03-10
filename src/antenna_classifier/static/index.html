@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Antenna Classifier — AntennaForge</title>
 <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
-<link rel="stylesheet" href="/static/css/platform.css">
-<script src="/static/js/platform-nav.js"></script>
+<link rel="stylesheet" href="__ROOT_PATH__/static/css/platform.css">
+<script src="__ROOT_PATH__/static/js/platform-nav.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -18,7 +18,7 @@
 <style>
 :root {
   --bg: #0d1117; --surface: #161b22; --border: #30363d;
-  --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+  --surface-alt: #1c2430; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
   --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -34,10 +34,23 @@ a { color: var(--accent); text-decoration: none; }
 .header .stats { margin-left: auto; display: flex; gap: 16px; font-size: 13px; color: var(--muted); }
 .header .stats span { color: var(--text); font-weight: 600; }
 
-.container { display: grid; grid-template-columns: 380px 1fr; height: calc(100vh - 49px - 56px); }
+.workspace-nav {
+  display: flex; gap: 8px; padding: 10px 24px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.workspace-tab {
+  padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.workspace-tab:hover { color: var(--text); border-color: var(--accent); }
+.workspace-tab.active { background: rgba(88,166,255,0.14); color: var(--accent); border-color: rgba(88,166,255,0.4); }
+
+.container { display: grid; grid-template-columns: 380px 1fr; height: calc(100vh - 49px - 56px - 53px); }
+.container.mode-lab { grid-template-columns: 1fr; }
 
 /* Sidebar */
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+.container.mode-lab .sidebar { display: none; }
 .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
 .sidebar-header input {
   width: 100%; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border);
@@ -136,6 +149,14 @@ a { color: var(--accent); text-decoration: none; }
 .sim-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
 .sim-stat .label { font-size: 10px; color: var(--muted); text-transform: uppercase; }
 .sim-stat .value { font-size: 20px; font-weight: 700; margin-top: 2px; }
+.sim-insights { margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.sim-insights h4 { margin: 0 0 8px; font-size: 13px; }
+.sim-dip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.sim-dip-chip { display: inline-flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-alt); min-width: 120px; }
+.sim-dip-chip strong { font-size: 13px; }
+.sim-dip-chip span { font-size: 11px; color: var(--muted); }
+.sim-dip-chip.best { border-color: var(--green); }
+.sim-dip-chip.nearest { border-color: var(--accent); }
 
 /* Tabs */
 .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
@@ -203,6 +224,115 @@ a { color: var(--accent); text-decoration: none; }
 .btn-del { background: transparent; color: var(--red); border-color: var(--red); padding: 2px 6px; font-size: 10px; }
 .btn-del:hover { background: rgba(248,81,73,0.15); }
 
+.lab-shell { display: grid; gap: 18px; }
+.lab-hero { padding: 18px; border-radius: 12px; border: 1px solid var(--border); background: linear-gradient(135deg, rgba(88,166,255,0.12), rgba(22,27,34,0.95)); }
+.lab-hero h2 { margin-bottom: 6px; }
+.lab-hero p { color: var(--muted); max-width: 760px; }
+.lab-layout { display: grid; gap: 18px; }
+.lab-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.lab-card, .lab-workspace, .lab-section-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+}
+.lab-card { padding: 14px; cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
+.lab-card:hover, .lab-card.active { border-color: var(--accent); transform: translateY(-1px); }
+.lab-card h3 { margin-bottom: 4px; font-size: 15px; }
+.lab-card p { color: var(--muted); font-size: 12px; }
+.lab-pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+.lab-pill {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; background: rgba(88,166,255,0.12); color: var(--accent);
+}
+.lab-workspace { padding: 18px; display: grid; gap: 18px; }
+.lab-topbar { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.lab-topbar p { color: var(--muted); max-width: 720px; }
+.lab-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.lab-stat { padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-alt); }
+.lab-stat .label { font-size: 10px; text-transform: uppercase; color: var(--muted); }
+.lab-stat .value { font-size: 18px; font-weight: 700; margin-top: 2px; line-height: 1.15; }
+.lab-stat .secondary { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.lab-stage { display: grid; grid-template-columns: minmax(320px, 0.9fr) minmax(520px, 1.1fr); gap: 16px; align-items: start; }
+.lab-controls-pane { display: grid; gap: 16px; align-self: start; }
+.lab-results-pane { display: grid; gap: 16px; position: sticky; top: 16px; align-self: start; }
+.lab-controls { display: grid; gap: 12px; }
+.lab-control { padding: 12px; border-radius: 10px; background: var(--surface-alt); border: 1px solid var(--border); }
+.lab-control.next-action { border-color: rgba(248,81,73,0.55); box-shadow: 0 0 0 1px rgba(248,81,73,0.2); animation: lab-next-action-blink 0.9s ease-in-out infinite; }
+.lab-control.next-action .lab-control-head strong { color: #ff938a; }
+.lab-control.useful-match { border-color: rgba(63,185,80,0.55); box-shadow: 0 0 0 1px rgba(63,185,80,0.22); animation: lab-useful-match-blink 0.95s ease-in-out infinite; }
+.lab-control.useful-match .lab-control-head strong { color: #9be9a8; }
+.lab-control-callout { margin-top: 8px; color: #ff938a; font-size: 12px; font-weight: 600; }
+.lab-control-callout.useful { color: #9be9a8; }
+.lab-control-feedback { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: rgba(88,166,255,0.08); display: grid; gap: 2px; }
+.lab-control-feedback .metric { font-size: 12px; font-weight: 700; }
+.lab-control-feedback .target { font-size: 11px; color: var(--muted); }
+.lab-control-feedback.in-range { border-color: rgba(63,185,80,0.28); background: rgba(63,185,80,0.10); }
+.lab-control-feedback.useful { border-color: rgba(63,185,80,0.32); background: rgba(63,185,80,0.12); animation: lab-useful-match-blink 0.95s ease-in-out infinite; }
+.lab-control-feedback.pending { border-color: rgba(48,54,61,0.9); background: rgba(139,148,158,0.08); }
+.lab-control-feedback.low, .lab-control-feedback.high { border-color: rgba(210,153,34,0.28); background: rgba(210,153,34,0.10); }
+.lab-control-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.lab-control-head strong { font-size: 13px; }
+.lab-control small { color: var(--muted); display: block; margin-top: 4px; }
+.lab-control input[type="range"] { width: 100%; }
+.lab-control input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+.lab-toggle-row { display: flex; align-items: center; gap: 10px; }
+.lab-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.lab-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.lab-inline-hint { font-size: 12px; color: var(--muted); }
+.lab-status-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.lab-status-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: rgba(139,148,158,0.12); color: var(--text); font-size: 12px; font-weight: 600;
+}
+.lab-status-chip.ready { border-color: rgba(63,185,80,0.25); background: rgba(63,185,80,0.12); color: #9be9a8; }
+.lab-status-chip.pending { border-color: rgba(210,153,34,0.28); background: rgba(210,153,34,0.12); color: #f2cc60; }
+.lab-status-chip.error { border-color: rgba(248,81,73,0.3); background: rgba(248,81,73,0.12); color: #ff938a; }
+.lab-status-chip.next-action { animation: lab-next-action-blink 0.9s ease-in-out infinite; }
+.lab-live-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.lab-stat.pending { border-color: rgba(210,153,34,0.25); box-shadow: inset 0 0 0 1px rgba(210,153,34,0.12); }
+.lab-stat.live { border-color: rgba(88,166,255,0.28); }
+.lab-meta-grid { display: grid; gap: 14px; }
+.lab-note-list { display: grid; gap: 8px; }
+.lab-note { padding: 10px 12px; border-radius: 10px; background: rgba(88,166,255,0.08); border: 1px solid rgba(88,166,255,0.18); color: var(--text); font-size: 13px; }
+.lab-equation { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-alt); }
+.lab-equation strong { display: block; font-size: 12px; margin-bottom: 4px; color: var(--muted); text-transform: uppercase; }
+.lab-equation code { display: block; font-family: 'Consolas', 'Courier New', monospace; font-size: 15px; color: var(--text); margin-bottom: 6px; }
+.lab-guidance { display: grid; gap: 8px; }
+.lab-guidance-item { padding: 10px 12px; border-radius: 10px; background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.18); font-size: 13px; }
+.lab-step-list { display: grid; gap: 10px; }
+.lab-step { padding: 12px; border-radius: 10px; background: var(--surface-alt); border: 1px solid var(--border); display: grid; gap: 6px; }
+.lab-step strong { font-size: 13px; }
+.lab-step-detail { color: var(--text); font-size: 13px; }
+.lab-step-target { color: var(--muted); font-size: 12px; }
+.lab-progress-grid { display: grid; gap: 8px; }
+.lab-progress-chip { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: rgba(88,166,255,0.08); display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.lab-progress-chip.in-range { border-color: rgba(63,185,80,0.28); background: rgba(63,185,80,0.10); }
+.lab-progress-chip.pending { border-color: rgba(48,54,61,0.9); background: rgba(139,148,158,0.08); }
+.lab-progress-chip.low,
+.lab-progress-chip.high { border-color: rgba(210,153,34,0.28); background: rgba(210,153,34,0.10); }
+.lab-progress-chip .metric { font-size: 14px; font-weight: 600; }
+.lab-progress-chip .target { color: var(--muted); font-size: 12px; }
+.lab-plot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.lab-plot-box { min-height: 320px; }
+.lab-3d-box { width: 100%; height: 320px; background: #0d1117; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; position: relative; }
+
+@keyframes lab-next-action-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.38; }
+}
+
+@keyframes lab-useful-match-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.52; }
+}
+
+@media (max-width: 1100px) {
+  .lab-stage { grid-template-columns: 1fr; }
+  .lab-results-pane { position: static; top: auto; }
+}
+
+.notes-modal { width: min(820px, 94vw); }
+.lab-notes-grid { display: grid; gap: 14px; }
+.lab-notes-grid .lab-section-card { padding: 16px; }
+
 /* Modal */
 .modal-overlay {
   display: none; position: fixed; inset: 0; z-index: 1000;
@@ -244,7 +374,12 @@ a { color: var(--accent); text-decoration: none; }
   <div class="stats" id="header-stats"></div>
 </div>
 
-<div class="container">
+<div class="workspace-nav">
+  <button class="workspace-tab active" id="workspace-tab-browse" onclick="setWorkspaceMode('browse')">Catalog / My Antennas</button>
+  <button class="workspace-tab" id="workspace-tab-lab" onclick="openTuningLab()">Tuning Lab</button>
+</div>
+
+<div class="container mode-browse" id="app-container">
   <!-- Sidebar: file list -->
   <div class="sidebar">
     <!-- My Antennas panel -->
@@ -271,6 +406,7 @@ a { color: var(--accent); text-decoration: none; }
         <option value="">All</option>
         <option value="valid">Valid only</option>
         <option value="invalid">Invalid only</option>
+        <option value="needs_review">Needs review</option>
       </select>
     </div>
     <div class="file-list" id="file-list"></div>
@@ -283,25 +419,60 @@ a { color: var(--accent); text-decoration: none; }
       <p>Select a file from the sidebar to view its classification and run simulations.</p>
       <div id="summary-area" style="margin-top: 32px; text-align: left;"></div>
     </div>
+    <div id="tuning-lab-view" style="display:none;"></div>
     <div id="detail-view" style="display:none;"></div>
   </div>
 </div>
 
 <script>
 // ---- State ----
-// Derive base URL: use server-injected root_path, fall back to pathname
+function normalizeBasePath(value) {
+  if (!value || value === '/' || value === 'null' || value === 'undefined') {
+    return '';
+  }
+  return value.replace(/\/+$/, '');
+}
+
+// Trust the browser URL first so standalone container access keeps using /api/*
+// even when ROOT_PATH is configured for a reverse proxy mount like /antenna.
 const ROOT_PATH = "__ROOT_PATH__";
-const BASE_URL = ROOT_PATH || window.location.pathname.replace(/\/$/, '');
+const CONFIGURED_BASE_URL = normalizeBasePath(ROOT_PATH);
+const LOCATION_BASE_URL = normalizeBasePath(window.location.pathname);
+const IS_ROOT_REQUEST = window.location.pathname === '/' || window.location.pathname === '';
+const BASE_URL = IS_ROOT_REQUEST ? '' : (LOCATION_BASE_URL || CONFIGURED_BASE_URL);
+const PLATFORM_NAV_PATH = BASE_URL ? `${BASE_URL}/` : '/antenna/';
 window.__BASE_URL = BASE_URL;
 let catalog = [];
 let summary = {};
+let reviewQueue = [];
 let activeFile = null;
 let currentUser = null;
+let antennaTypes = [];
+let tuningLabExercises = [];
+let activeTuningExercise = null;
+let activeTuningResult = null;
+let tuningLabValues = {};
+const TUNING_LIVE_DEBOUNCE_MS = 260;
+let tuningLabDebounceHandle = null;
+let tuningLabRunCounter = 0;
+let tuningLabIsRunning = false;
+let tuningLabRunStatus = 'idle';
+let tuningLabAppliedValues = {};
+let tuningLabLastRunAt = '';
+let tuningLab3DRequestCounter = 0;
+let tuningLabPatternType = 'elevation';
+let tuningLabPatternTypeManual = false;
+
+function getExerciseDefaultPatternType(exercise = activeTuningExercise) {
+  return exercise?.default_pattern_type === 'azimuth' ? 'azimuth' : 'elevation';
+}
+let tuningLabPatternRequestCounter = 0;
+let _lastTuningLabPatData = null;
 
 // ---- Boot ----
 document.addEventListener('DOMContentLoaded', async () => {
   // Render platform top nav (fetches /api/me from hamfeeds)
-  renderPlatformNav({ currentPath: '/antenna/' });
+  renderPlatformNav({ apiBase: BASE_URL, currentPath: PLATFORM_NAV_PATH, cssHref: `${BASE_URL}/static/css/platform.css` });
   await checkCurrentUser();
   await loadCatalog();
 });
@@ -323,12 +494,16 @@ async function checkCurrentUser() {
 // ---- Site Navigation handled by platform-nav.js ----
 
 async function loadCatalog() {
-  const [catResp, sumResp] = await Promise.all([
+  const [catResp, sumResp, queueResp, labResp] = await Promise.all([
     fetch(`${BASE_URL}/api/catalog`).then(r => r.json()),
     fetch(`${BASE_URL}/api/summary`).then(r => r.json()),
+    fetch(`${BASE_URL}/api/review-queue?limit=12`).then(r => r.json()),
+    fetch(`${BASE_URL}/api/tuning-lab/exercises`).then(r => r.json()).catch(() => ({ exercises: [] })),
   ]);
   catalog = catResp.files || [];
   summary = sumResp;
+  reviewQueue = queueResp.files || [];
+  tuningLabExercises = labResp.exercises || [];
   renderStats();
   populateFilters();
   renderFileList(catalog);
@@ -342,12 +517,14 @@ async function loadCatalog() {
 
 async function refreshCatalog() {
   try {
-    const [catResp, sumResp] = await Promise.all([
+    const [catResp, sumResp, queueResp] = await Promise.all([
       fetch(`${BASE_URL}/api/catalog`).then(r => r.json()),
       fetch(`${BASE_URL}/api/summary`).then(r => r.json()),
+      fetch(`${BASE_URL}/api/review-queue?limit=12`).then(r => r.json()),
     ]);
     catalog = catResp.files || [];
     summary = sumResp;
+    reviewQueue = queueResp.files || [];
     renderStats();
     applyFilters(); // preserve active filters instead of resetting to full catalog
     renderSummary();
@@ -365,6 +542,7 @@ function renderStats() {
     <div>Files: <span>${summary.total || 0}</span></div>
     <div>Valid: <span style="color:var(--green)">${summary.valid || 0}</span></div>
     <div>Invalid: <span style="color:var(--red)">${summary.invalid || 0}</span></div>
+    <div>Review Queue: <span style="color:var(--yellow)">${summary.needs_review || 0}</span></div>
     <div>Types: <span>${Object.keys(summary.types || {}).length}</span></div>
   `;
 }
@@ -396,6 +574,7 @@ function applyFilters() {
   if (bandVal) filtered = filtered.filter(f => f.band === bandVal);
   if (validVal === 'valid') filtered = filtered.filter(f => f.valid);
   if (validVal === 'invalid') filtered = filtered.filter(f => !f.valid);
+  if (validVal === 'needs_review') filtered = filtered.filter(f => f.needs_review);
   renderFileList(filtered);
 }
 
@@ -408,6 +587,7 @@ function renderFileList(files) {
       <div class="name">${esc(f.filename)}</div>
       <div class="meta">
         <span class="badge badge-type">${esc(f.antenna_type || 'unknown')}</span>
+        ${f.is_reviewed ? `<span class="badge badge-band" title="Human-reviewed classification">reviewed</span>` : ''}
         ${f.band ? `<span class="badge badge-band">${esc(f.band)}</span>` : ''}
         <span class="badge ${f.valid ? 'badge-valid' : 'badge-invalid'}">${f.valid ? 'valid' : 'invalid'}</span>
         <span class="badge badge-conf">${(f.confidence*100).toFixed(0)}%</span>
@@ -433,27 +613,63 @@ function renderSummary() {
         <h3>Antenna Types</h3>
         <div class="big-number">${Object.keys(summary.types || {}).length}</div>
       </div>
+      <div class="summary-card">
+        <h3>Needs Review</h3>
+        <div class="big-number" style="color:var(--yellow)">${summary.needs_review || 0}</div>
+      </div>
     </div>
     <div class="section">
       <h3>Type Distribution</h3>
-      <div id="summary-type-chart" style="width:100%;height:300px;"></div>
+      <div id="summary-type-chart" style="width:100%;"></div>
     </div>
     <div class="section">
       <h3>Band Distribution</h3>
       <div id="summary-band-chart" style="width:100%;height:300px;"></div>
     </div>
+    <div class="section">
+      <h3>Review Queue</h3>
+      <div id="review-queue-list"></div>
+    </div>
   `;
-  // Type pie chart
+
+  // Type distribution works better as a ranked bar chart than a donut
+  // when there are many small categories and long labels.
   const types = summary.types || {};
+  const typeChartEl = document.getElementById('summary-type-chart');
+  const typeEntries = Object.entries(types).sort((a, b) => b[1] - a[1]);
+  const topTypeLimit = 12;
+  let displayTypeEntries = typeEntries.slice(0, topTypeLimit);
+  if (typeEntries.length > topTypeLimit) {
+    const otherCount = typeEntries.slice(topTypeLimit)
+      .reduce((sum, [, count]) => sum + count, 0);
+    if (otherCount > 0) displayTypeEntries.push(['other', otherCount]);
+  }
+  const orderedTypeEntries = displayTypeEntries.slice().reverse();
+  const typeChartHeight = Math.max(360, orderedTypeEntries.length * 34 + 80);
+  typeChartEl.style.height = `${typeChartHeight}px`;
+  typeChartEl.style.minHeight = `${typeChartHeight}px`;
+
   Plotly.newPlot('summary-type-chart', [{
-    labels: Object.keys(types), values: Object.values(types),
-    type: 'pie', hole: 0.4,
-    textinfo: 'label+value',
-    marker: { line: { color: '#161b22', width: 2 } }
+    x: orderedTypeEntries.map(([, count]) => count),
+    y: orderedTypeEntries.map(([label]) => label),
+    type: 'bar',
+    orientation: 'h',
+    text: orderedTypeEntries.map(([, count]) => count),
+    textposition: 'outside',
+    cliponaxis: false,
+    marker: {
+      color: '#2f81f7',
+      line: { color: '#161b22', width: 1.5 },
+    },
+    hovertemplate: '%{y}: %{x}<extra></extra>',
   }], { paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
-    font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 10, l: 10, r: 10 },
+    font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 24, l: 140, r: 48 },
+    xaxis: { color: '#8b949e', title: 'Count', gridcolor: 'rgba(139,148,158,0.18)' },
+    yaxis: { color: '#8b949e', automargin: true },
+    bargap: 0.18,
     showlegend: false
   }, { responsive: true });
+
   // Band bar chart
   const bands = summary.bands || {};
   Plotly.newPlot('summary-band-chart', [{
@@ -463,17 +679,757 @@ function renderSummary() {
     font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 30, l: 40, r: 10 },
     xaxis: { color: '#8b949e' }, yaxis: { color: '#8b949e', title: 'Count' }
   }, { responsive: true });
+
+  const queueEl = document.getElementById('review-queue-list');
+  if (!reviewQueue.length) {
+    queueEl.innerHTML = '<p style="color:var(--muted);">No files currently need review.</p>';
+  } else {
+    queueEl.innerHTML = reviewQueue.map(item => `
+      <div class="file-item" onclick="selectFile('${esc(item.filename)}')" style="margin-bottom:8px;">
+        <div class="name">${esc(item.filename)}</div>
+        <div class="meta">
+          <span class="badge badge-type">${esc(item.antenna_type || 'unknown')}</span>
+          <span class="badge badge-conf">${((item.confidence || 0)*100).toFixed(0)}%</span>
+          ${(item.review_reasons || []).map(reason => `<span class="badge badge-band">${esc(reason.replace(/_/g, ' '))}</span>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  }
+}
+
+function setMainView(mode) {
+  const welcome = document.getElementById('welcome');
+  const detail = document.getElementById('detail-view');
+  const lab = document.getElementById('tuning-lab-view');
+  welcome.style.display = mode === 'welcome' ? 'block' : 'none';
+  detail.style.display = mode === 'detail' ? 'block' : 'none';
+  lab.style.display = mode === 'lab' ? 'block' : 'none';
+}
+
+function setWorkspaceMode(mode) {
+  const container = document.getElementById('app-container');
+  const browseTab = document.getElementById('workspace-tab-browse');
+  const labTab = document.getElementById('workspace-tab-lab');
+  const isLab = mode === 'lab';
+  container.classList.toggle('mode-lab', isLab);
+  container.classList.toggle('mode-browse', !isLab);
+  browseTab.classList.toggle('active', !isLab);
+  labTab.classList.toggle('active', isLab);
+  if (isLab) {
+    setMainView('lab');
+  } else if (activeFile || activeUserAntenna) {
+    setMainView('detail');
+  } else {
+    setMainView('welcome');
+  }
+}
+
+async function loadTuningLabCatalog() {
+  if (tuningLabExercises.length) return;
+  const resp = await fetch(`${BASE_URL}/api/tuning-lab/exercises`).then(r => r.json());
+  tuningLabExercises = resp.exercises || [];
+}
+
+async function openTuningLab(exerciseId) {
+  activeFile = null;
+  activeUserAntenna = null;
+  applyFilters();
+  renderMyAntennaList();
+  setWorkspaceMode('lab');
+  const view = document.getElementById('tuning-lab-view');
+  view.innerHTML = '<div style="padding:40px;text-align:center;"><div class="spinner"></div> Loading tuning exercises...</div>';
+  await loadTuningLabCatalog();
+  if (!activeTuningExercise || exerciseId) {
+    await selectTuningExercise(exerciseId || tuningLabExercises[0]?.id);
+    return;
+  }
+  renderTuningLab();
+}
+
+async function selectTuningExercise(exerciseId) {
+  if (!exerciseId) return;
+  setWorkspaceMode('lab');
+  clearScheduledTuningRun();
+  tuningLabRunCounter += 1;
+  tuningLabIsRunning = false;
+  tuningLabRunStatus = 'idle';
+  tuningLabAppliedValues = {};
+  tuningLabLastRunAt = '';
+  activeTuningResult = null;
+  const detail = await fetch(`${BASE_URL}/api/tuning-lab/exercises/${encodeURIComponent(exerciseId)}`).then(r => r.json());
+  activeTuningExercise = detail;
+  tuningLabPatternType = getExerciseDefaultPatternType(detail);
+  tuningLabPatternTypeManual = false;
+  tuningLabValues = { ...(detail.starter_values || {}) };
+  renderTuningLab(true);
+  await runTuningExercise();
+}
+
+function resetTuningExercise() {
+  if (!activeTuningExercise) return;
+  if (!tuningLabPatternTypeManual) {
+    tuningLabPatternType = getExerciseDefaultPatternType();
+  }
+  tuningLabValues = { ...(activeTuningExercise.starter_values || {}) };
+  renderTuningLab();
+  scheduleTuningExerciseRun('preset', true);
+}
+
+function loadTuningReferencePreset() {
+  if (!activeTuningExercise) return;
+  if (!tuningLabPatternTypeManual) {
+    tuningLabPatternType = getExerciseDefaultPatternType();
+  }
+  tuningLabValues = { ...(activeTuningExercise.reference_values || {}) };
+  renderTuningLab();
+  scheduleTuningExerciseRun('reference', true);
+}
+
+function updateTuningControl(controlId, rawValue) {
+  const control = (activeTuningExercise?.controls || []).find(item => item.id === controlId);
+  tuningLabValues[controlId] = Number(rawValue);
+  document.querySelectorAll(`[data-lab-value="${controlId}"]`).forEach(el => {
+    el.textContent = formatTuningValue(controlId, Number(rawValue));
+  });
+  if (control?.type === 'checkbox') {
+    renderTuningLab();
+  }
+  tuningLabRunStatus = tuningLabIsRunning ? 'running' : 'pending';
+  syncTuningLiveStatus();
+  scheduleTuningExerciseRun('live');
+}
+
+function clearScheduledTuningRun() {
+  if (tuningLabDebounceHandle) {
+    clearTimeout(tuningLabDebounceHandle);
+    tuningLabDebounceHandle = null;
+  }
+}
+
+function normalizedTuningValues(values = tuningLabValues) {
+  const normalized = {};
+  (activeTuningExercise?.controls || []).forEach(control => {
+    normalized[control.id] = Number(values[control.id] ?? control.default);
+  });
+  return normalized;
+}
+
+function shouldShowTuningControl(control) {
+  const revealControlId = control?.reveal_control_id;
+  const revealControlMinValue = Number(control?.reveal_control_min_value);
+  if (revealControlId && isFinite(revealControlMinValue)) {
+    const sourceControl = (activeTuningExercise?.controls || []).find(item => item.id === revealControlId);
+    const revealControlValue = Number(tuningLabValues[revealControlId] ?? sourceControl?.default ?? 0);
+    const currentValue = Number(tuningLabValues[control.id] ?? control.default);
+    const defaultValue = Number(control.default);
+    if (currentValue !== defaultValue) {
+      return true;
+    }
+    if (revealControlValue < revealControlMinValue) {
+      return false;
+    }
+  }
+  const revealAnalysisFlag = control?.reveal_analysis_flag;
+  if (revealAnalysisFlag) {
+    const currentValue = Number(tuningLabValues[control.id] ?? control.default);
+    const defaultValue = Number(control.default);
+    if (currentValue !== defaultValue) {
+      return true;
+    }
+    if (!Boolean(activeTuningResult?.current?.analysis?.[revealAnalysisFlag])) {
+      return false;
+    }
+  }
+  const revealMax = Number(control?.reveal_reactance_abs_max);
+  if (!isFinite(revealMax)) {
+    return true;
+  }
+  const currentValue = Number(tuningLabValues[control.id] ?? control.default);
+  const defaultValue = Number(control.default);
+  if (currentValue !== defaultValue) {
+    return true;
+  }
+  const reactance = Number(activeTuningResult?.current?.analysis?.reactance_ohm);
+  return isFinite(reactance) && Math.abs(reactance) <= revealMax;
+}
+
+function visibleTuningControls() {
+  return (activeTuningExercise?.controls || []).filter(control => shouldShowTuningControl(control));
+}
+
+function tuningValuesEqual(left = {}, right = {}) {
+  return (activeTuningExercise?.controls || []).every(control => {
+    const fallback = Number(control.default);
+    return Number(left[control.id] ?? fallback) === Number(right[control.id] ?? fallback);
+  });
+}
+
+function hasPendingTuningChanges() {
+  if (!activeTuningExercise) return false;
+  return !tuningValuesEqual(normalizedTuningValues(), tuningLabAppliedValues);
+}
+
+function scheduleTuningExerciseRun(source = 'live', immediate = false) {
+  if (!activeTuningExercise) return;
+  clearScheduledTuningRun();
+  if (tuningLabIsRunning) {
+    tuningLabRunStatus = 'pending';
+    syncTuningLiveStatus();
+    if (!immediate) {
+      tuningLabDebounceHandle = setTimeout(() => {
+        tuningLabDebounceHandle = null;
+        scheduleTuningExerciseRun(source, true);
+      }, TUNING_LIVE_DEBOUNCE_MS);
+    }
+    return;
+  }
+  tuningLabRunStatus = immediate ? 'running' : 'pending';
+  syncTuningLiveStatus();
+  if (immediate) {
+    void runTuningExercise(source);
+    return;
+  }
+  tuningLabDebounceHandle = setTimeout(() => {
+    tuningLabDebounceHandle = null;
+    void runTuningExercise(source);
+  }, TUNING_LIVE_DEBOUNCE_MS);
+}
+
+function getTuningStatusMeta() {
+  const hasTelemetry = Boolean(activeTuningResult?.current?.ok && activeTuningResult?.reference?.ok);
+  if (tuningLabRunStatus === 'error') {
+    return { tone: 'error', text: 'Live update failed. Try running again.' };
+  }
+  if (tuningLabRunStatus === 'running') {
+    return { tone: 'pending', text: hasTelemetry ? 'Updating sweep and telemetry...' : 'Running first live sweep...' };
+  }
+  if (tuningLabRunStatus === 'pending') {
+    return { tone: 'pending', text: 'Knob moved. Refreshing overlays...' };
+  }
+  if (hasTelemetry) {
+    return { tone: 'ready', text: tuningLabLastRunAt ? `Live telemetry synced at ${tuningLabLastRunAt}` : 'Live telemetry synced' };
+  }
+  return { tone: '', text: 'Move a control to update the sweep.' };
+}
+
+function syncTuningLiveStatus() {
+  const status = getTuningStatusMeta();
+  document.querySelectorAll('[data-lab-live-status]').forEach(el => {
+    el.textContent = status.text;
+    el.className = `lab-status-chip ${status.tone}`.trim();
+  });
+  document.querySelectorAll('[data-lab-pending-style]').forEach(el => {
+    el.classList.toggle('pending', tuningLabRunStatus === 'pending' || tuningLabRunStatus === 'running');
+  });
+}
+
+function formatSignedValue(value, decimals, unit = '') {
+  if (value == null || !isFinite(value)) return 'N/A';
+  const number = Number(value);
+  const prefix = number > 0 ? '+' : number < 0 ? '−' : '±';
+  const absolute = Math.abs(number).toFixed(decimals);
+  return `${prefix}${absolute}${unit}`;
+}
+
+function formatTuningValue(controlId, value) {
+  const control = (activeTuningExercise?.controls || []).find(item => item.id === controlId);
+  if (!control) return String(value);
+  if (control.type === 'checkbox') {
+    return Number(value) >= 0.5 ? 'On' : 'Off';
+  }
+  const decimals = control.step >= 1 ? 0 : control.step >= 0.1 ? 1 : control.step >= 0.01 ? 2 : 3;
+  return `${Number(value).toFixed(decimals)} ${control.unit}`;
+}
+
+function tuningControlFeedbackMap(snapshot = []) {
+  const byLabel = new Map((snapshot || []).map(item => [item.label, item]));
+  return {
+    driven_scale: byLabel.get('Driven vs reference') || null,
+    reflector_scale: byLabel.get('Reflector vs reference driven') || null,
+    reflector_spacing_scale: byLabel.get('Reflector spacing vs reference') || null,
+    director_scale: byLabel.get('Director vs reference driven') || null,
+    director_spacing_scale: byLabel.get('Director spacing vs reference') || null,
+    hairpin_match_scale: byLabel.get('Hairpin match vs reference') || null,
+  };
+}
+
+function renderTuningNotesModal() {
+  if (!activeTuningExercise) return;
+  const exercise = activeTuningExercise;
+  const analysis = activeTuningResult?.current?.analysis;
+  const body = document.getElementById('tuning-notes-body');
+  if (!body) return;
+  const tuningGlossary = [
+    { term: 'Reactance', detail: 'The imaginary part of impedance, X. It shows how far the feedpoint is from resonance at the target frequency.' },
+    { term: 'Inductive', detail: 'Positive reactance. The antenna system is electrically long at the sampled frequency and often needs to be shortened.' },
+    { term: 'Capacitive', detail: 'Negative reactance. The antenna system is electrically short at the sampled frequency and often needs more length.' },
+    { term: 'Inductance', detail: 'A matching element that adds positive reactance. In the Yagi lesson, the hairpin approximates this final feed transformation.' },
+    { term: 'Near resonance', detail: 'The point where X is close to zero, so the feedpoint is mostly resistive and easier to match.' },
+  ];
+  body.innerHTML = `
+    <div class="lab-notes-grid">
+      <div class="lab-section-card">
+        <h3 style="margin-bottom:12px;">Concepts Introduced</h3>
+        <div class="lab-note-list">
+          ${(exercise.concepts || []).map(item => `<div class="lab-note">${esc(item)}</div>`).join('')}
+        </div>
+      </div>
+      <div class="lab-section-card">
+        <h3 style="margin-bottom:12px;">Tuning Progression</h3>
+        <div class="lab-step-list">
+          ${(exercise.progression_steps || []).map(step => `
+            <div class="lab-step">
+              <strong>${esc(step.title)}</strong>
+              <div class="lab-step-detail">${esc(step.detail)}</div>
+              <div class="lab-step-target">${esc(step.target)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      <div class="lab-section-card">
+        <h3 style="margin-bottom:10px;">Read The Feedpoint</h3>
+        <div class="lab-note-list">
+          ${(exercise.reading_notes || []).map(note => `<div class="lab-note">${esc(note)}</div>`).join('')}
+        </div>
+      </div>
+      <div class="lab-section-card">
+        <h3 style="margin-bottom:10px;">Core Equations</h3>
+        <div class="lab-note-list">
+          ${(exercise.equations || []).map(eq => `
+            <div class="lab-equation">
+              <strong>${esc(eq.label)}</strong>
+              <code>${esc(eq.expression)}</code>
+              <div style="font-size:13px;color:var(--muted);">${esc(eq.explanation)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      <div class="lab-section-card">
+        <h3 style="margin-bottom:10px;">RF Vocabulary</h3>
+        <div class="lab-note-list">
+          ${tuningGlossary.map(item => `
+            <div class="lab-equation">
+              <strong>${esc(item.term)}</strong>
+              <div style="font-size:13px;color:var(--muted);">${esc(item.detail)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      ${analysis?.guidance?.length ? `
+        <div class="lab-section-card">
+          <h3 style="margin-bottom:12px;">Coach Notes</h3>
+          <div class="lab-guidance">
+            ${(analysis.guidance || []).map(item => `<div class="lab-guidance-item">${esc(item)}</div>`).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+  document.getElementById('tuning-notes-modal').classList.add('open');
+}
+
+function renderTuningLab(isLoadingResults = false) {
+  const view = document.getElementById('tuning-lab-view');
+  if (!activeTuningExercise) {
+    view.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);">No tuning exercises available.</div>';
+    return;
+  }
+  const exercise = activeTuningExercise;
+  const current = activeTuningResult?.current;
+  const analysis = current?.analysis;
+  const referenceAnalysis = activeTuningResult?.reference?.analysis;
+  const liveStatus = getTuningStatusMeta();
+  const showPendingStyle = tuningLabRunStatus === 'pending' || tuningLabRunStatus === 'running';
+  const visibleControls = visibleTuningControls();
+  const hiddenTrimControl = (exercise.controls || []).find(control => Number.isFinite(Number(control.reveal_reactance_abs_max)) && !shouldShowTuningControl(control));
+  const stopTrimming = Boolean(analysis?.stop_trimming);
+  const nextAction = analysis?.next_action || null;
+  const nextActionControlId = nextAction?.control_id || '';
+  const controlFeedback = tuningControlFeedbackMap(analysis?.progression_snapshot || []);
+  const telemetryCards = analysis ? [
+    { label: 'Resonance Error', value: analysis.resonance_error_mhz != null ? formatSignedValue(analysis.resonance_error_mhz, 2, ' MHz') : 'N/A' },
+    { label: '|X| To Zero', value: analysis.reactance_ohm != null ? `${Math.abs(Number(analysis.reactance_ohm)).toFixed(1)} Ω` : 'N/A' },
+    { label: 'R Delta To 50Ω', value: analysis.resistance_ohm != null ? formatSignedValue(Number(analysis.resistance_ohm) - 50, 1, ' Ω') : 'N/A' },
+    { label: 'SWR Gap To Ref', value: (analysis.swr_at_target != null && referenceAnalysis?.swr_at_target != null) ? formatSignedValue(Number(analysis.swr_at_target) - Number(referenceAnalysis.swr_at_target), 2) : 'N/A' },
+  ] : [];
+  const directiveMetricCards = analysis ? [
+    ...(analysis.directive_gain_dbi != null ? [{ label: 'Peak Gain', value: `${Number(analysis.directive_gain_dbi).toFixed(1)} dBi` }] : []),
+    ...(analysis.front_to_back_db != null ? [{ label: 'Front-To-Back', value: `${Number(analysis.front_to_back_db).toFixed(1)} dB` }] : []),
+  ] : [];
+  view.innerHTML = `
+    <div class="lab-shell">
+      <div class="lab-hero">
+        <h2>Tuning Lab</h2>
+        <p>Use controlled starter models to see how design frequency, feedpoint resistance, and reactance move together. Each exercise overlays your current sweep against a tuned reference so the why is visible, not just the score.</p>
+      </div>
+
+      <div class="lab-list">
+        ${tuningLabExercises.map(item => `
+          <div class="lab-card${item.id === exercise.id ? ' active' : ''}" onclick="selectTuningExercise('${esc(item.id)}')">
+            <h3>${esc(item.title)}</h3>
+            <div class="lab-pill-row">
+              <span class="lab-pill">${esc(item.difficulty)}</span>
+              <span class="lab-pill">${Number(item.target_freq_mhz).toFixed(2)} MHz</span>
+            </div>
+            <p>${esc(item.summary)}</p>
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="lab-layout">
+        <div class="lab-workspace">
+          <div class="lab-topbar">
+            <div>
+              <h2>${esc(exercise.title)}</h2>
+              <div class="lab-pill-row">
+                <span class="lab-pill">${esc(exercise.antenna_type)}</span>
+                <span class="lab-pill">Target ${Number(exercise.target_freq_mhz).toFixed(2)} MHz</span>
+                <span class="lab-pill">${esc(exercise.difficulty)}</span>
+              </div>
+              <p>${esc(exercise.goal)}</p>
+              <div class="lab-status-row">
+                <span class="lab-status-chip">Live telemetry</span>
+                <span class="lab-status-chip ${liveStatus.tone}" data-lab-live-status>${esc(liveStatus.text)}</span>
+                ${nextAction ? `<span class="lab-status-chip ${esc(nextAction.tone)} next-action">Next step: ${esc(nextAction.label)}</span>` : ''}
+                ${stopTrimming ? '<span class="lab-status-chip ready">Stop trimming: current match is already in the safe zone.</span>' : ''}
+              </div>
+            </div>
+            <div class="lab-actions">
+              <button class="btn" onclick="runTuningExercise()">Run Exercise</button>
+              <button class="btn btn-secondary" onclick="resetTuningExercise()">Reset Starter</button>
+              <button class="btn btn-secondary" onclick="loadTuningReferencePreset()">Load Reference</button>
+            </div>
+          </div>
+
+          <div class="lab-stage">
+            <div class="lab-controls-pane">
+              <div class="lab-section-card" style="padding:16px;">
+              <div class="lab-section-head">
+                <h3 style="margin:0;">Controls</h3>
+                <button class="btn btn-secondary" onclick="renderTuningNotesModal()">Tuning Notes</button>
+              </div>
+              <div class="lab-note-list" style="margin-bottom:12px;">
+                ${(exercise.success_criteria || []).slice(0, 3).map(item => `<div class="lab-note">${esc(item)}</div>`).join('')}
+              </div>
+              <div class="lab-controls">
+                ${visibleControls.map(control => `
+                  ${(() => {
+                    const isHairpinUsefulMatch = control.id === 'hairpin_match_scale' && Boolean(analysis?.hairpin_useful_match);
+                    const isNextActionControl = nextActionControlId === control.id && !isHairpinUsefulMatch;
+                    const feedback = controlFeedback[control.id];
+                    const feedbackStatus = isHairpinUsefulMatch ? 'useful' : feedback?.status;
+                    return `
+                  <div class="lab-control${isNextActionControl ? ' next-action' : ''}${isHairpinUsefulMatch ? ' useful-match' : ''}"${isNextActionControl ? ' data-lab-next-action="true"' : ''}>
+                    <div class="lab-control-head">
+                      <strong>${esc(control.label)}</strong>
+                      <span data-lab-value="${esc(control.id)}">${formatTuningValue(control.id, tuningLabValues[control.id] ?? control.default)}</span>
+                    </div>
+                    ${control.type === 'checkbox' ? `
+                      <label class="lab-toggle-row">
+                        <input type="checkbox" ${Number(tuningLabValues[control.id] ?? control.default) >= 0.5 ? 'checked' : ''} oninput="updateTuningControl('${esc(control.id)}', this.checked ? 1 : 0)">
+                        <span>${Number(tuningLabValues[control.id] ?? control.default) >= 0.5 ? 'Enabled' : 'Disabled'}</span>
+                      </label>
+                    ` : `
+                      <input type="range" min="${control.min}" max="${control.max}" step="${control.step}" value="${tuningLabValues[control.id] ?? control.default}" oninput="updateTuningControl('${esc(control.id)}', this.value)">
+                    `}
+                    ${feedback ? `
+                      <div class="lab-control-feedback ${esc(feedbackStatus)}">
+                        <div class="metric">${esc(feedback.label)}: ${esc(feedback.value)}</div>
+                        <div class="target">${isHairpinUsefulMatch ? 'Already useful: SWR < 1.5, R within 10 Ω of 50, and X within ±5 Ω.' : esc(feedback.target)}</div>
+                      </div>
+                    ` : ''}
+                    ${isHairpinUsefulMatch ? `<div class="lab-control-callout useful">Useful already: this hairpin setting is in a safe operating zone.</div>` : ''}
+                    ${isNextActionControl ? `<div class="lab-control-callout">Next action: ${esc(nextAction.detail)}</div>` : ''}
+                    <small>${esc(control.description)}</small>
+                    <small>${esc(control.effect)}</small>
+                  </div>
+                `; })()}
+                `).join('')}
+              </div>
+              ${hiddenTrimControl ? `
+                <div class="lab-inline-hint" style="margin-top:8px;">${esc(hiddenTrimControl.label)} unlocks once |X| is within ${Number(hiddenTrimControl.reveal_reactance_abs_max).toFixed(0)} Ω of zero at the target frequency.</div>
+              ` : ''}
+              ${stopTrimming ? `
+                <div class="lab-note" style="margin-top:10px;background:rgba(63,185,80,0.10);border-color:rgba(63,185,80,0.28);">Stop trimming. The current dipole is already close enough that another cut is more likely to overshoot the target than improve it.</div>
+              ` : ''}
+              <div class="lab-inline-hint" style="margin-top:12px;">Every knob move auto-runs the exercise after a brief pause so the overlays and telemetry stay live.</div>
+              </div>
+            </div>
+
+            <div class="lab-results-pane">
+              ${analysis?.guidance?.length ? `
+                <div class="lab-section-card" style="padding:16px;">
+                  <div class="lab-section-head">
+                    <h3 style="margin:0;">Coach Notes</h3>
+                    <span class="lab-inline-hint">Actionable feedback from the live sweep</span>
+                  </div>
+                  <div class="lab-guidance">
+                    ${(analysis?.guidance || []).map(item => `<div class="lab-guidance-item">${esc(item)}</div>`).join('')}
+                  </div>
+                </div>
+              ` : ''}
+              ${analysis ? `
+                <div class="lab-plot-grid">
+                  <div class="plot-card"><h4>SWR Overlay</h4><div id="lab-plot-swr" class="lab-plot-box"></div></div>
+                  <div class="plot-card"><h4>Impedance Overlay</h4><div id="lab-plot-impedance" class="lab-plot-box"></div></div>
+                </div>
+              ` : ''}
+
+              <div class="lab-grid">
+                ${((current?.geometry_cards) || []).map(card => `
+                  <div class="lab-stat${showPendingStyle ? ' pending' : ''}" data-lab-pending-style>
+                    <div class="label">${esc(card.label)}</div>
+                    <div class="value">${esc(card.value)}</div>
+                    ${card.secondary_value ? `<div class="secondary">${esc(card.secondary_value)}</div>` : ''}
+                  </div>
+                `).join('')}
+              </div>
+
+              ${analysis ? `
+                <div class="lab-live-grid">
+                  ${directiveMetricCards.map(card => `
+                    <div class="lab-stat live${showPendingStyle ? ' pending' : ''}" data-lab-pending-style>
+                      <div class="label">${esc(card.label)}</div>
+                      <div class="value">${esc(card.value)}</div>
+                    </div>
+                  `).join('')}
+                  ${telemetryCards.map(card => `
+                    <div class="lab-stat live${showPendingStyle ? ' pending' : ''}" data-lab-pending-style>
+                      <div class="label">${esc(card.label)}</div>
+                      <div class="value">${esc(card.value)}</div>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+
+              ${isLoadingResults && !analysis ? `
+                <div class="lab-section-card" style="padding:24px;text-align:center;color:var(--muted);">
+                  <div class="spinner"></div> Running sweep and impedance simulation...
+                </div>
+              ` : activeTuningResult && !activeTuningResult.current?.ok ? `
+                <div class="lab-section-card" style="padding:18px;color:var(--red);">
+                  Exercise simulation failed: ${esc(activeTuningResult.current?.error || 'unknown error')}
+                </div>
+              ` : analysis ? `
+                <div class="lab-grid">
+                  <div class="lab-stat"><div class="label">R At Target</div><div class="value">${Number(analysis.resistance_ohm).toFixed(1)} Ω</div></div>
+                  <div class="lab-stat"><div class="label">X At Target</div><div class="value">${Number(analysis.reactance_ohm).toFixed(1)} Ω</div></div>
+                  <div class="lab-stat"><div class="label">Reactive State</div><div class="value" style="font-size:18px;">${esc(analysis.reactive_state)}</div></div>
+                  <div class="lab-stat"><div class="label">SWR At Target</div><div class="value">${analysis.swr_at_target != null ? Number(analysis.swr_at_target).toFixed(2) : 'N/A'}</div></div>
+                  <div class="lab-stat"><div class="label">Best Dip</div><div class="value">${analysis.resonant_freq_mhz != null ? Number(analysis.resonant_freq_mhz).toFixed(2) + ' MHz' : 'N/A'}</div></div>
+                  <div class="lab-stat"><div class="label">Match Quality</div><div class="value" style="font-size:18px;">${esc(analysis.match_quality)}</div></div>
+                </div>
+                <div class="plot-card">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+                    <h4 style="margin:0;">Radiation Pattern</h4>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                      <button class="pat-btn${tuningLabPatternType === 'elevation' ? ' active' : ''}" onclick="setTuningLabPatternType('elevation')" title="Elevation cut">Elevation</button>
+                      <button class="pat-btn${tuningLabPatternType === 'azimuth' ? ' active' : ''}" onclick="setTuningLabPatternType('azimuth')" title="Azimuth cut">Azimuth</button>
+                      <select id="lab-dr-range" class="dr-select" onchange="reRenderTuningLabPattern()" title="Dynamic range floor for the Tuning Lab pattern display">
+                        <option value="20">20 dB</option>
+                        <option value="30">30 dB</option>
+                        <option value="40" selected>40 dB</option>
+                        <option value="60">60 dB</option>
+                        <option value="0">Full</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div id="lab-plot-pattern" class="lab-plot-box">
+                    <div style="padding:20px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading ${esc(tuningLabPatternType)} pattern...</div>
+                  </div>
+                </div>
+                <div class="plot-card">
+                  <h4>3D Geometry View</h4>
+                  <div id="lab-viewer3d-container" class="lab-3d-box">
+                    <div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D view...</div>
+                  </div>
+                </div>
+              ` : `
+                <div class="lab-section-card" style="padding:18px;color:var(--muted);">Adjust a control, then run the exercise to compare your sweep against the tuned reference.</div>
+              `}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  if (!isLoadingResults && activeTuningResult?.current?.ok && activeTuningResult?.reference?.ok) {
+    requestAnimationFrame(() => {
+      renderTuningPlots(activeTuningResult);
+      void loadTuningLabPatternView();
+      void loadTuningLab3DView();
+    });
+  }
+}
+
+function setTuningLabPatternType(type) {
+  if (type !== 'elevation' && type !== 'azimuth') return;
+  tuningLabPatternType = type;
+  tuningLabPatternTypeManual = true;
+  renderTuningLab();
+}
+
+async function loadTuningLabPatternView() {
+  if (!activeTuningExercise || !activeTuningResult?.current?.ok) return;
+  const plotEl = document.getElementById('lab-plot-pattern');
+  if (!plotEl) return;
+
+  const requestId = ++tuningLabPatternRequestCounter;
+  const currentValues = activeTuningResult.current_values || normalizedTuningValues();
+  Plotly.purge(plotEl);
+  plotEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading ' + esc(tuningLabPatternType) + ' pattern...</div>';
+  try {
+    const resp = await fetch(`${BASE_URL}/api/tuning-lab/exercises/${encodeURIComponent(activeTuningExercise.id)}/pattern?type=${tuningLabPatternType}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: currentValues }),
+    }).then(r => r.json());
+    if (requestId !== tuningLabPatternRequestCounter) {
+      return;
+    }
+    const pat = resp.radiation_pattern;
+    if (pat?.theta?.length) {
+      _lastTuningLabPatData = pat;
+      plotEl.innerHTML = '';
+      await renderRadiationPattern(pat, null, { plotId: 'lab-plot-pattern', dynamicRangeId: 'lab-dr-range', patternType: tuningLabPatternType });
+      return;
+    }
+    plotEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No radiation pattern data available</div>';
+  } catch (err) {
+    if (requestId !== tuningLabPatternRequestCounter) {
+      return;
+    }
+    plotEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--red);">Failed to load pattern: ' + esc(err.message) + '</div>';
+  }
+}
+
+function reRenderTuningLabPattern() {
+  if (_lastTuningLabPatData?.theta?.length) {
+    renderRadiationPattern(_lastTuningLabPatData, null, {
+      plotId: 'lab-plot-pattern',
+      dynamicRangeId: 'lab-dr-range',
+      patternType: tuningLabPatternType,
+    });
+  }
+}
+
+async function loadTuningLab3DView() {
+  if (!activeTuningExercise || !activeTuningResult?.current?.ok) return;
+  const container = document.getElementById('lab-viewer3d-container');
+  if (!container) return;
+
+  if (!window.Viewer3D) {
+    container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading 3D engine...</div>';
+    await new Promise(r => { const iv = setInterval(() => { if (window.Viewer3D) { clearInterval(iv); r(); }}, 200); });
+  }
+
+  const requestId = ++tuningLab3DRequestCounter;
+  const currentValues = activeTuningResult.current_values || normalizedTuningValues();
+  container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);"><div class="spinner"></div> Loading geometry...</div>';
+  try {
+    const geo = await fetch(`${BASE_URL}/api/tuning-lab/exercises/${encodeURIComponent(activeTuningExercise.id)}/geometry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: currentValues }),
+    }).then(r => r.json());
+    if (requestId !== tuningLab3DRequestCounter) {
+      return;
+    }
+    container.innerHTML = '';
+    window.Viewer3D.init('lab-viewer3d-container', geo);
+  } catch (err) {
+    if (requestId !== tuningLab3DRequestCounter) {
+      return;
+    }
+    container.innerHTML = `<div style="color:var(--red);padding:12px;">Failed to load 3D view: ${esc(err.message)}</div>`;
+  }
+}
+
+async function runTuningExercise() {
+  if (!activeTuningExercise) return;
+  clearScheduledTuningRun();
+  const runValues = normalizedTuningValues();
+  const requestId = ++tuningLabRunCounter;
+  tuningLabIsRunning = true;
+  tuningLabRunStatus = 'running';
+  if (!activeTuningResult) {
+    renderTuningLab(true);
+  } else {
+    syncTuningLiveStatus();
+  }
+  try {
+    const resp = await fetch(`${BASE_URL}/api/tuning-lab/exercises/${encodeURIComponent(activeTuningExercise.id)}/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: runValues }),
+    }).then(r => r.json());
+    if (requestId !== tuningLabRunCounter) {
+      return;
+    }
+    activeTuningResult = resp;
+    tuningLabAppliedValues = runValues;
+    tuningLabLastRunAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    tuningLabRunStatus = 'synced';
+    tuningLabIsRunning = false;
+    renderTuningLab();
+    if (hasPendingTuningChanges()) {
+      scheduleTuningExerciseRun('live', true);
+    }
+  } catch (error) {
+    if (requestId !== tuningLabRunCounter) {
+      return;
+    }
+    tuningLabIsRunning = false;
+    tuningLabRunStatus = 'error';
+    if (!activeTuningResult) {
+      activeTuningResult = { current: { ok: false, error: error?.message || 'request failed' } };
+      renderTuningLab();
+    } else {
+      syncTuningLiveStatus();
+    }
+  }
+}
+
+function renderTuningPlots(result) {
+  const currentSwr = result.current?.swr_sweep;
+  const refSwr = result.reference?.swr_sweep;
+  const currentImp = result.current?.impedance_sweep;
+  const refImp = result.reference?.impedance_sweep;
+  const plotStyle = { paper_bgcolor: 'transparent', plot_bgcolor: '#0d1117', font: { color: '#e6edf3', size: 11 }, margin: { t: 10, b: 40, l: 50, r: 20 } };
+  const axStyle = { gridcolor: '#21262d', zerolinecolor: '#30363d' };
+
+  if (currentSwr?.freq_mhz?.length > 1 && refSwr?.freq_mhz?.length > 1) {
+    const allSwr = [...currentSwr.swr, ...refSwr.swr].filter(v => isFinite(v));
+    const minSwr = Math.min(...allSwr);
+    const maxSwr = Math.max(...allSwr);
+    const yMax = minSwr > 10 ? maxSwr * 1.1 : Math.min(10, maxSwr);
+    Plotly.newPlot('lab-plot-swr', [
+      { x: refSwr.freq_mhz, y: refSwr.swr, type: 'scatter', mode: 'lines', name: 'Reference', line: { color: '#8b949e', width: 2, dash: 'dash' } },
+      { x: currentSwr.freq_mhz, y: currentSwr.swr, type: 'scatter', mode: 'lines', name: 'Current', line: { color: '#58a6ff', width: 2 } },
+      { x: currentSwr.freq_mhz, y: currentSwr.freq_mhz.map(() => 2), type: 'scatter', mode: 'lines', name: '2:1', line: { color: '#f85149', width: 1, dash: 'dot' } },
+    ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'SWR', ...axStyle, rangemode: 'tozero', range: [0, yMax] }, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
+  }
+
+  if (currentImp?.freq_mhz?.length > 1 && refImp?.freq_mhz?.length > 1) {
+    Plotly.newPlot('lab-plot-impedance', [
+      { x: refImp.freq_mhz, y: refImp.r, type: 'scatter', mode: 'lines', name: 'Reference R', line: { color: '#3fb950', width: 2, dash: 'dash' } },
+      { x: refImp.freq_mhz, y: refImp.x, type: 'scatter', mode: 'lines', name: 'Reference X', line: { color: '#d29922', width: 2, dash: 'dash' } },
+      { x: currentImp.freq_mhz, y: currentImp.r, type: 'scatter', mode: 'lines', name: 'Current R', line: { color: '#3fb950', width: 2 } },
+      { x: currentImp.freq_mhz, y: currentImp.x, type: 'scatter', mode: 'lines', name: 'Current X', line: { color: '#d29922', width: 2 } },
+      { x: currentImp.freq_mhz, y: currentImp.freq_mhz.map(() => 0), type: 'scatter', mode: 'lines', name: '0 Ω', line: { color: '#30363d', width: 1, dash: 'dot' } },
+    ], { ...plotStyle, xaxis: { title: 'Frequency (MHz)', ...axStyle }, yaxis: { title: 'Ohms', ...axStyle }, legend: { x: 1, xanchor: 'right', y: 1 } }, { responsive: true });
+  }
 }
 
 // ---- File detail ----
 async function selectFile(filename) {
   activeFile = filename;
   applyFilters(); // refresh highlights
+  setWorkspaceMode('browse');
 
   const dv = document.getElementById('detail-view');
-  const welcome = document.getElementById('welcome');
-  welcome.style.display = 'none';
-  dv.style.display = 'block';
+  setMainView('detail');
   dv.innerHTML = '<div style="padding:40px;text-align:center;"><div class="spinner"></div> Loading...</div>';
 
   const data = await fetch(`${BASE_URL}/api/file/${encodeURIComponent(filename)}`).then(r => r.json());
@@ -486,12 +1442,17 @@ async function selectFile(filename) {
 
 function renderDetail(d) {
   const dv = document.getElementById('detail-view');
+  const selectedReferenceIds = (d.references || [])
+    .map(r => r.reference_id)
+    .filter(id => id != null)
+    .map(id => String(id));
   dv.innerHTML = `
     <div class="detail-header">
       <div>
         <div class="detail-title">${esc(d.filename)}</div>
         <div class="detail-badges">
           <span class="badge badge-type">${esc(d.antenna_type)}</span>
+          ${d.is_reviewed ? `<span class="badge badge-band" title="Human-reviewed override applied">reviewed</span>` : ''}
           ${d.band ? `<span class="badge badge-band">${esc(d.band)}</span>` : ''}
           <span class="badge ${d.valid ? 'badge-valid' : 'badge-invalid'}">${d.valid ? 'valid' : 'invalid'}</span>
           <span class="badge badge-conf">${(d.confidence*100).toFixed(0)}%</span>
@@ -501,9 +1462,10 @@ function renderDetail(d) {
 
     <div class="info-grid">
       <div class="info-card"><div class="label">Antenna Type</div><div class="value">${esc(d.antenna_type)}</div></div>
+      <div class="info-card"><div class="label">Classifier Type</div><div class="value">${esc(d.auto_antenna_type || d.antenna_type)}</div></div>
       <div class="info-card"><div class="label">Confidence</div><div class="value">${(d.confidence*100).toFixed(1)}%</div></div>
-      <div class="info-card"><div class="label">Frequency</div><div class="value">${d.frequency_mhz ? d.frequency_mhz.toFixed(2)+' MHz' : 'N/A'}</div></div>
-      <div class="info-card"><div class="label">Band</div><div class="value">${esc(d.band || 'N/A')}</div></div>
+      <div class="info-card"><div class="label">Design Freq</div><div class="value">${(d.design_frequencies_mhz && d.design_frequencies_mhz.length) ? d.design_frequencies_mhz.map(f => Number(f).toFixed(2)+' MHz').join(', ') : (d.frequency_mhz ? d.frequency_mhz.toFixed(2)+' MHz' : 'N/A')}</div></div>
+      <div class="info-card"><div class="label">Bands</div><div class="value">${(d.bands && d.bands.length) ? esc(d.bands.join(', ')) : esc(d.band || 'N/A')}</div></div>
       <div class="info-card"><div class="label">Elements</div><div class="value">${d.element_count || 0}</div></div>
       <div class="info-card"><div class="label">Wires</div><div class="value">${d.wire_count || 0}</div></div>
       <div class="info-card"><div class="label">Ground</div><div class="value">${esc(d.ground_type || 'free_space')}</div></div>
@@ -515,6 +1477,7 @@ function renderDetail(d) {
       <div class="tab active" data-tab="tab-3d" onclick="switchTab(this)">3D View</div>
       <div class="tab" data-tab="tab-sim" onclick="switchTab(this)">Simulation</div>
       <div class="tab" data-tab="tab-evidence" onclick="switchTab(this)">Evidence</div>
+      <div class="tab" data-tab="tab-review" onclick="switchTab(this)">Review</div>
       <div class="tab" data-tab="tab-validation" onclick="switchTab(this)">Validation (${(d.validation||[]).length})</div>
       <div class="tab" data-tab="tab-nec" onclick="switchTab(this)">NEC Source</div>
     </div>
@@ -549,6 +1512,7 @@ function renderDetail(d) {
       <div id="sim-error" style="display:none;"></div>
       <div id="sim-content" style="display:none;">
         <div class="sim-summary" id="sim-summary-stats"></div>
+        <div class="sim-insights" id="sim-sweep-insights" style="display:none;"></div>
         <div class="plot-grid">
           <div class="plot-card"><h4>SWR vs Frequency</h4><div id="plot-swr" class="plot-box"></div></div>
           <div class="plot-card"><h4>Impedance vs Frequency</h4><div id="plot-impedance" class="plot-box"></div></div>
@@ -588,6 +1552,48 @@ function renderDetail(d) {
       </div>` : ''}
     </div>
 
+    <div class="tab-content" id="tab-review">
+      <div class="section">
+        <h3>Review Classification</h3>
+        <div class="info-grid" style="margin-bottom:16px;">
+          <div class="info-card"><div class="label">Effective Type</div><div class="value">${esc(d.antenna_type || 'unknown')}</div></div>
+          <div class="info-card"><div class="label">Auto Type</div><div class="value">${esc(d.auto_antenna_type || d.antenna_type || 'unknown')}</div></div>
+          <div class="info-card"><div class="label">Review Status</div><div class="value">${d.is_reviewed ? 'reviewed' : 'auto only'}</div></div>
+          <div class="info-card"><div class="label">Reviewed At</div><div class="value">${esc(d.reviewed_at || 'N/A')}</div></div>
+        </div>
+        <div style="display:grid;gap:12px;max-width:760px;">
+          <label style="display:grid;gap:6px;">
+            <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Override Antenna Type</span>
+            <select id="review-type" data-selected="${esc(d.reviewed_antenna_type || '')}" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 12px;"></select>
+          </label>
+          <label style="display:grid;gap:6px;">
+            <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Reason</span>
+            <textarea id="review-reason" rows="4" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 12px;resize:vertical;">${esc(d.review_reason || '')}</textarea>
+          </label>
+          <label style="display:grid;gap:6px;">
+            <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Reference Catalog</span>
+            <div id="review-reference-options" data-selected-ids="${esc(selectedReferenceIds.join(','))}" style="display:grid;gap:8px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-alt);"></div>
+          </label>
+          <label style="display:grid;gap:6px;">
+            <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Additional References</span>
+            <textarea id="review-refs" rows="4" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 12px;resize:vertical;" placeholder="Optional: one new URL per line to add to this antenna type catalog"></textarea>
+          </label>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button id="review-save" data-filename="${esc(d.filename)}" onclick="saveClassificationReview(this.dataset.filename)" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 14px;cursor:pointer;font-weight:600;">Save Review</button>
+            <button id="review-clear" data-filename="${esc(d.filename)}" onclick="clearClassificationReview(this.dataset.filename)" style="background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:10px 14px;cursor:pointer;">Clear Override</button>
+            <span id="review-status" style="font-size:13px;color:var(--muted);"></span>
+          </div>
+        </div>
+        ${(d.references || []).length ? `
+        <div class="section" style="padding-left:0;padding-right:0;">
+          <h3>Stored References</h3>
+          <ul class="evidence-list">
+            ${(d.references || []).map(r => `<li><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title || r.url)}</a>${r.antenna_type ? ` <span style="color:var(--muted);">(${esc(r.antenna_type.replace(/_/g, ' '))})</span>` : ''}</li>`).join('')}
+          </ul>
+        </div>` : ''}
+      </div>
+    </div>
+
     <!-- Validation tab -->
     <div class="tab-content" id="tab-validation">
       ${(d.validation||[]).length ? `
@@ -610,6 +1616,107 @@ function renderDetail(d) {
       <div class="nec-viewer">${esc(d.nec_content || 'No content available')}</div>
     </div>
   `;
+  _ensureTypes();
+  updateReviewReferenceCatalog(d.reference_catalog || [], d.references || []);
+  const reviewType = document.getElementById('review-type');
+  if (reviewType) {
+    reviewType.addEventListener('change', async () => {
+      const selectedType = reviewType.value || d.auto_antenna_type || d.antenna_type || 'unknown';
+      await refreshReviewReferenceCatalog(selectedType);
+    });
+  }
+}
+
+function updateReviewReferenceCatalog(catalogReferences, selectedReferences) {
+  const el = document.getElementById('review-reference-options');
+  if (!el) return;
+  const selectedIds = new Set((selectedReferences || [])
+    .map(ref => ref.reference_id)
+    .filter(id => id != null)
+    .map(id => String(id)));
+  if (!catalogReferences.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;">No catalog references for this antenna type yet. Save additional URLs below to seed the catalog.</div>';
+    return;
+  }
+  el.innerHTML = catalogReferences.map(ref => `
+    <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;">
+      <input type="checkbox" class="review-reference-checkbox" value="${esc(ref.id)}" ${selectedIds.has(String(ref.id)) ? 'checked' : ''}>
+      <span>
+        <a href="${esc(ref.url)}" target="_blank" rel="noopener noreferrer">${esc(ref.title || ref.url)}</a>
+        ${ref.note ? `<div style="color:var(--muted);font-size:12px;">${esc(ref.note)}</div>` : ''}
+      </span>
+    </label>
+  `).join('');
+}
+
+async function refreshReviewReferenceCatalog(antennaType) {
+  const el = document.getElementById('review-reference-options');
+  if (!el) return;
+  if (!antennaType) {
+    updateReviewReferenceCatalog([], []);
+    return;
+  }
+  el.innerHTML = '<div style="color:var(--muted);font-size:13px;">Loading references...</div>';
+  try {
+    const resp = await fetch(`${BASE_URL}/api/reference-catalog?antenna_type=${encodeURIComponent(antennaType)}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    updateReviewReferenceCatalog(data.references || [], []);
+  } catch (err) {
+    el.innerHTML = `<div style="color:var(--red);font-size:13px;">Failed to load references: ${esc(err.message)}</div>`;
+  }
+}
+
+async function saveClassificationReview(filename) {
+  const status = document.getElementById('review-status');
+  const saveBtn = document.getElementById('review-save');
+  const reviewedType = document.getElementById('review-type').value || null;
+  const reason = document.getElementById('review-reason').value;
+  const referenceIds = Array.from(document.querySelectorAll('.review-reference-checkbox:checked'))
+    .map(el => parseInt(el.value, 10))
+    .filter(Number.isFinite);
+  const references = document.getElementById('review-refs').value
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(url => ({ url }));
+  saveBtn.disabled = true;
+  status.textContent = 'Saving review...';
+  try {
+    const resp = await fetch(`${BASE_URL}/api/review/${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reviewed_antenna_type: reviewedType,
+        reason,
+        reference_ids: referenceIds,
+        references,
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    await refreshCatalog();
+    renderDetail(data);
+    load3DView(filename);
+    status.textContent = 'Review saved';
+  } catch (e) {
+    status.textContent = `Failed: ${e.message}`;
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+function clearClassificationReview(filename) {
+  const reviewType = document.getElementById('review-type');
+  const reviewReason = document.getElementById('review-reason');
+  reviewType.value = '';
+  reviewReason.value = '';
+  document.querySelectorAll('.review-reference-checkbox').forEach(el => { el.checked = false; });
+  document.getElementById('review-refs').value = '';
+  return saveClassificationReview(filename);
 }
 
 function switchTab(tabEl) {
@@ -683,8 +1790,9 @@ function renderSimulation(sweepData, patData, geoData) {
   const pat = patData?.radiation_pattern;
 
   if (swr) {
+    stats.push({ label: 'Design Freq', value: swr.design_freq_mhz ? swr.design_freq_mhz.toFixed(2)+' MHz' : 'N/A' });
     stats.push({ label: 'Min SWR', value: swr.min_swr != null ? swr.min_swr.toFixed(2) : 'N/A' });
-    stats.push({ label: 'Resonant Freq', value: swr.resonant_freq_mhz ? swr.resonant_freq_mhz.toFixed(2)+' MHz' : 'N/A' });
+    stats.push({ label: 'SWR Dip', value: swr.resonant_freq_mhz ? swr.resonant_freq_mhz.toFixed(2)+' MHz' : 'N/A' });
     stats.push({ label: '2:1 BW', value: swr.bandwidth_2to1_mhz ? swr.bandwidth_2to1_mhz.toFixed(2)+' MHz' : 'N/A' });
   }
   if (pat) {
@@ -692,10 +1800,44 @@ function renderSimulation(sweepData, patData, geoData) {
     stats.push({ label: 'F/B Ratio', value: pat.front_to_back_db != null ? pat.front_to_back_db.toFixed(1)+' dB' : 'N/A' });
   }
 
+  const hasUsablePattern = !!(pat?.gain_db?.some(g => g > -900));
+
   const statsEl = document.getElementById('sim-summary-stats');
   statsEl.innerHTML = stats.map(s => `
     <div class="sim-stat"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>
   `).join('');
+
+  const insightsEl = document.getElementById('sim-sweep-insights');
+  if (insightsEl) {
+    const dips = (swr && Array.isArray(swr.dips)) ? swr.dips : [];
+    if (dips.length) {
+      insightsEl.style.display = 'block';
+      insightsEl.innerHTML = `
+        <h4>Sweep Dips</h4>
+        <div class="sim-dip-list">
+          ${dips.map(dip => {
+            const classes = ['sim-dip-chip'];
+            if (dip.is_global_min) classes.push('best');
+            if (dip.is_nearest_design) classes.push('nearest');
+            const notes = [];
+            if (dip.is_global_min) notes.push('best SWR');
+            if (dip.is_nearest_design) notes.push('nearest design');
+            if (dip.distance_from_design_mhz != null) notes.push('Δ ' + Number(dip.distance_from_design_mhz).toFixed(2) + ' MHz');
+            return `
+              <div class="${classes.join(' ')}">
+                <strong>${Number(dip.freq_mhz).toFixed(2)} MHz</strong>
+                <span>SWR ${Number(dip.swr).toFixed(2)}</span>
+                <span>${notes.join(' · ') || 'local minimum'}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    } else {
+      insightsEl.style.display = 'none';
+      insightsEl.innerHTML = '';
+    }
+  }
 
   _lastGeoData = geoData;
   _lastPatData = pat;
@@ -741,8 +1883,7 @@ function renderSimulation(sweepData, patData, geoData) {
     // Highlight 3D button since we default to full 3D pattern
     document.querySelectorAll('.pat-btn').forEach(b => b.classList.toggle('active', b.textContent === '3D'));
     if (pat?.theta?.length) {
-      const validGains = (pat.gain_db || []).filter(g => g > -900);
-      if (validGains.length) {
+      if (hasUsablePattern) {
         renderRadiationPattern(pat, geoData);
       } else {
         patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No valid gain data \u2014 try forcing a pattern with the buttons above.</div>';
@@ -753,10 +1894,25 @@ function renderSimulation(sweepData, patData, geoData) {
   });
 }
 
-function renderRadiationPattern(pat, geoData) {
+function renderRadiationPattern(pat, geoData, options = {}) {
+  const plotId = options.plotId || 'plot-pattern';
+  const dynamicRangeId = options.dynamicRangeId || 'dr-range';
+  const plotEl = document.getElementById(plotId);
+  const requestedPatternType = options.patternType || plotEl?.dataset.patternType || null;
+  if (plotEl) {
+    if (requestedPatternType) {
+      plotEl.dataset.patternType = requestedPatternType;
+    } else {
+      delete plotEl.dataset.patternType;
+    }
+  }
   const uniqueTheta = [...new Set(pat.theta)].sort((a,b) => a-b);
   const uniquePhi = [...new Set(pat.phi)].sort((a,b) => a-b);
   const colors = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#bc8cff'];
+  const isAzimuthPattern = requestedPatternType === 'azimuth'
+    || (!requestedPatternType && uniqueTheta.length <= 3 && uniquePhi.length > 10);
+  const isElevationPattern = requestedPatternType === 'elevation'
+    || (!requestedPatternType && uniquePhi.length <= 10 && uniqueTheta.length > 10);
   const polarLayout = {
     paper_bgcolor: 'transparent', plot_bgcolor: '#0d1117',
     font: { color: '#e6edf3', size: 11 },
@@ -770,7 +1926,7 @@ function renderRadiationPattern(pat, geoData) {
   };
 
   // Determine pattern type: azimuth (many phi, few theta) or elevation (many theta, few phi)
-  if (uniqueTheta.length <= 3 && uniquePhi.length > 10) {
+  if (isAzimuthPattern) {
     // Azimuth pattern — gain vs phi at fixed theta
     const traces = [];
     uniqueTheta.forEach((theta, idx) => {
@@ -783,7 +1939,7 @@ function renderRadiationPattern(pat, geoData) {
       }
       const validGains = gains.filter(g => g > -900);
       if (!validGains.length) return;
-      const drVal = parseInt(document.getElementById('dr-range')?.value || '40', 10);
+      const drVal = parseInt(document.getElementById(dynamicRangeId)?.value || '40', 10);
       const rawMin = Math.min(...validGains);
       const maxG = Math.max(...validGains);
       const minG = drVal > 0 ? Math.max(rawMin, maxG - drVal) : rawMin;
@@ -795,10 +1951,10 @@ function renderRadiationPattern(pat, geoData) {
         line: { color: colors[idx % colors.length], width: 2 },
       });
     });
-    polarLayout.title = { text: 'Azimuth Pattern', font: { color: '#8b949e', size: 12 } };
-    return Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
+    polarLayout.title = { text: 'Azimuth Polar Pattern', font: { color: '#8b949e', size: 12 } };
+    return Plotly.newPlot(plotId, traces, polarLayout, { responsive: true });
 
-  } else if (uniquePhi.length <= 10 && uniqueTheta.length > 10) {
+  } else if (isElevationPattern) {
     // Elevation cuts — gain vs theta at selected phi values
     const byPhi = {};
     for (let i = 0; i < pat.theta.length; i++) {
@@ -821,7 +1977,7 @@ function renderRadiationPattern(pat, geoData) {
       const d = byPhi[phi];
       const validGains = d.gain.filter(g => g > -900);
       if (!validGains.length) return;
-      const drVal = parseInt(document.getElementById('dr-range')?.value || '40', 10);
+      const drVal = parseInt(document.getElementById(dynamicRangeId)?.value || '40', 10);
       const rawMin = Math.min(...validGains);
       const maxG = Math.max(...validGains);
       const minG = drVal > 0 ? Math.max(rawMin, maxG - drVal) : rawMin;
@@ -834,7 +1990,7 @@ function renderRadiationPattern(pat, geoData) {
       });
     });
     polarLayout.title = { text: 'Elevation Pattern', font: { color: '#8b949e', size: 12 } };
-    return Plotly.newPlot('plot-pattern', traces, polarLayout, { responsive: true });
+    return Plotly.newPlot(plotId, traces, polarLayout, { responsive: true });
 
   } else {
     // Full 3D grid — render as 3D surface in Cartesian coordinates
@@ -848,7 +2004,7 @@ function renderRadiationPattern(pat, geoData) {
       if (ti !== undefined && pi !== undefined) gainMatrix[ti][pi] = pat.gain_db[k];
     }
     // Clamp gain floor to user-selected dynamic range
-    const drVal = parseInt(document.getElementById('dr-range')?.value || '40', 10);
+    const drVal = parseInt(document.getElementById(dynamicRangeId)?.value || '40', 10);
     let maxG = -Infinity, rawMinG = Infinity;
     for (let i = 0; i < nT; i++) for (let j = 0; j < nP; j++) {
       const v = gainMatrix[i][j];
@@ -918,7 +2074,7 @@ function renderRadiationPattern(pat, geoData) {
         });
       }
     }
-    return Plotly.newPlot('plot-pattern', traces3d, {
+    return Plotly.newPlot(plotId, traces3d, {
       paper_bgcolor: 'transparent',
       scene: {
         bgcolor: '#0d1117',
@@ -965,7 +2121,7 @@ async function forcePattern(type) {
       }
       _lastPatData = pat;
       patEl.innerHTML = ''; // clear spinner before Plotly render
-      await renderRadiationPattern(pat, _lastGeoData);
+      await renderRadiationPattern(pat, _lastGeoData, { patternType: type });
     } else {
       patEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">No pattern data returned</div>';
     }
@@ -1095,11 +2251,10 @@ async function selectUserAntenna(id) {
   activeUserAntenna = id;
   applyFilters(); // clear catalog highlight
   renderMyAntennaList();
+  setWorkspaceMode('browse');
 
   const dv = document.getElementById('detail-view');
-  const welcome = document.getElementById('welcome');
-  welcome.style.display = 'none';
-  dv.style.display = 'block';
+  setMainView('detail');
   dv.innerHTML = '<div style="padding:40px;text-align:center;"><div class="spinner"></div> Loading...</div>';
 
   const data = await fetch(`${BASE_URL}/api/my-antennas/${id}`).then(r => r.json());
@@ -1342,7 +2497,7 @@ async function forceUserPattern(type) {
       if (!validGains.length) { patEl.innerHTML = '<div style="padding:20px;color:var(--muted);">No valid gain data</div>'; return; }
       _lastPatData = pat;
       patEl.innerHTML = ''; // clear spinner before Plotly render
-      await renderRadiationPattern(pat, _lastGeoData);
+      await renderRadiationPattern(pat, _lastGeoData, { patternType: type });
     }
     else patEl.innerHTML = '<div style="padding:20px;color:var(--muted);">No pattern data</div>';
   } catch (e) { patEl.innerHTML = '<div style="color:var(--red);padding:20px;">Error: ' + esc(e.message) + '</div>'; }
@@ -1353,8 +2508,7 @@ async function deleteUserAntenna(id) {
   await fetch(`${BASE_URL}/api/my-antennas/${id}`, { method: 'DELETE' });
   if (activeUserAntenna === id) {
     activeUserAntenna = null;
-    document.getElementById('detail-view').style.display = 'none';
-    document.getElementById('welcome').style.display = 'block';
+    setWorkspaceMode('browse');
   }
   await loadMyAntennas();
 }
@@ -1362,18 +2516,31 @@ async function deleteUserAntenna(id) {
 // ---- Unified Create Modal ----
 let _typesLoaded = false;
 function _ensureTypes() {
-  if (_typesLoaded) return;
+  if (_typesLoaded) {
+    _populateTypeSelects();
+    return;
+  }
   _typesLoaded = true;
   fetch(`${BASE_URL}/api/types`).then(r => r.json()).then(d => {
-    const opts = (d.types || []).filter(t => t !== 'unknown' && t !== 'wire_object' && t !== 'error');
-    const descSel = document.getElementById('desc-type');
-    const pdfSel = document.getElementById('pdf-type');
-    const urlSel = document.getElementById('url-type');
-    const optsHtml = opts.map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
-    descSel.innerHTML = optsHtml;
-    pdfSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
-    urlSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
+    antennaTypes = (d.types || []).filter(t => t !== 'unknown' && t !== 'wire_object' && t !== 'error');
+    _populateTypeSelects();
   });
+}
+
+function _populateTypeSelects() {
+  const optsHtml = antennaTypes.map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
+  const descSel = document.getElementById('desc-type');
+  const pdfSel = document.getElementById('pdf-type');
+  const urlSel = document.getElementById('url-type');
+  const reviewSel = document.getElementById('review-type');
+  if (descSel) descSel.innerHTML = optsHtml;
+  if (pdfSel) pdfSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
+  if (urlSel) urlSel.innerHTML = '<option value="">(auto-detect)</option>' + optsHtml;
+  if (reviewSel) {
+    const selected = reviewSel.dataset.selected || '';
+    reviewSel.innerHTML = '<option value="">(use classifier result)</option>' + optsHtml;
+    reviewSel.value = selected;
+  }
 }
 
 function openCreateModal(tab) {
@@ -1426,6 +2593,10 @@ function _oodaSet(phase, status, detail) {
   if (d) d.textContent = detail || '';
 }
 
+function _getSelectedTunerMode() {
+  return document.getElementById('create-tuner-mode')?.value || 'deterministic';
+}
+
 async function submitCreate() {
   const mode = document.getElementById('create-modal').dataset.mode;
   if (mode === 'desc') return submitDescription();
@@ -1446,6 +2617,7 @@ async function submitDescription() {
     frequency_mhz: parseFloat(document.getElementById('desc-freq').value) || 14.0,
     ground_type: document.getElementById('desc-ground').value,
     description: document.getElementById('desc-details').value,
+    tuner_mode: _getSelectedTunerMode(),
   };
   try {
     const resp = await fetch(`${BASE_URL}/api/my-antennas/generate-stream`, {
@@ -1492,23 +2664,47 @@ async function submitPdf() {
   const fileInput = document.getElementById('pdf-file');
   if (!fileInput.files.length) { status.innerHTML = '<span style="color:var(--red);">Select a PDF file</span>'; return; }
   btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Uploading & designing… this may take 30-60 seconds';
+  status.innerHTML = _oodaHtml();
   try {
     const fd = new FormData();
     fd.append('pdf', fileInput.files[0]);
     fd.append('name', document.getElementById('pdf-name').value.trim() || 'PDF Upload');
     fd.append('description', document.getElementById('pdf-desc').value);
+    fd.append('tuner_mode', _getSelectedTunerMode());
     const pdfType = document.getElementById('pdf-type').value;
     if (pdfType) fd.append('antenna_type', pdfType);
-    const resp = await fetch(`${BASE_URL}/api/my-antennas/upload-pdf`, { method: 'POST', body: fd });
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/upload-pdf-stream`, { method: 'POST', body: fd });
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
-    const row = await resp.json();
-    status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
-    fileInput.value = '';
-    document.getElementById('pdf-name').value = '';
-    document.getElementById('pdf-desc').value = '';
-    document.getElementById('pdf-type').selectedIndex = 0;
-    await _afterCreate(row);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const msg = JSON.parse(line.slice(6));
+        if (msg.event === 'step') {
+          _oodaSet(msg.phase, msg.status, msg.name + ': ' + (msg.detail || ''));
+        } else if (msg.event === 'done') {
+          status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+          fileInput.value = '';
+          document.getElementById('pdf-name').value = '';
+          document.getElementById('pdf-desc').value = '';
+          document.getElementById('pdf-type').selectedIndex = 0;
+          await _afterCreate(msg.antenna);
+          return;
+        } else if (msg.event === 'error') {
+          throw new Error(msg.detail);
+        }
+      }
+    }
+    if (!status.querySelector('.done-check')) {
+      status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+    }
   } catch (e) {
     status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
   } finally { btn.disabled = false; }
@@ -1520,25 +2716,49 @@ async function submitUrl() {
   const url = document.getElementById('url-input').value.trim();
   if (!url) { status.innerHTML = '<span style="color:var(--red);">URL is required</span>'; return; }
   btn.disabled = true;
-  status.innerHTML = '<div class="spinner"></div> Fetching page & designing… this may take 30-60 seconds';
+  status.innerHTML = _oodaHtml();
   try {
     const body = {
       url,
       name: document.getElementById('url-name').value.trim() || 'URL Import',
       description: document.getElementById('url-desc').value,
       antenna_type: document.getElementById('url-type').value,
+      tuner_mode: _getSelectedTunerMode(),
     };
-    const resp = await fetch(`${BASE_URL}/api/my-antennas/from-url`, {
+    const resp = await fetch(`${BASE_URL}/api/my-antennas/from-url-stream`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
-    const row = await resp.json();
-    status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
-    document.getElementById('url-input').value = '';
-    document.getElementById('url-name').value = '';
-    document.getElementById('url-desc').value = '';
-    document.getElementById('url-type').selectedIndex = 0;
-    await _afterCreate(row);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const msg = JSON.parse(line.slice(6));
+        if (msg.event === 'step') {
+          _oodaSet(msg.phase, msg.status, msg.name + ': ' + (msg.detail || ''));
+        } else if (msg.event === 'done') {
+          status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+          document.getElementById('url-input').value = '';
+          document.getElementById('url-name').value = '';
+          document.getElementById('url-desc').value = '';
+          document.getElementById('url-type').selectedIndex = 0;
+          await _afterCreate(msg.antenna);
+          return;
+        } else if (msg.event === 'error') {
+          throw new Error(msg.detail);
+        }
+      }
+    }
+    if (!status.querySelector('.done-check')) {
+      status.innerHTML = '<span style="color:var(--green);">&#10003; Created!</span>';
+    }
   } catch (e) {
     status.innerHTML = `<span style="color:var(--red);">Failed: ${esc(e.message)}</span>`;
   } finally { btn.disabled = false; }
@@ -1551,7 +2771,7 @@ async function submitSurprise() {
   status.innerHTML = '<div class="spinner"></div> Rolling the dice… this may take 15-30 seconds';
   try {
     const resp = await fetch(`${BASE_URL}/api/my-antennas/surprise`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tuner_mode: _getSelectedTunerMode() }),
     });
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${resp.status}`); }
     const row = await resp.json();
@@ -1573,6 +2793,16 @@ function esc(s) {
   return d.innerHTML;
 }
 </script>
+
+<div class="modal-overlay" id="tuning-notes-modal">
+  <div class="modal notes-modal">
+    <h2>Tuning Notes</h2>
+    <div id="tuning-notes-body"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModals()">Close</button>
+    </div>
+  </div>
+</div>
 
 <!-- Unified Create Antenna Modal -->
 <div class="modal-overlay" id="create-modal" data-mode="desc">
@@ -1637,6 +2867,11 @@ function esc(s) {
     </div>
 
     <div class="modal-status" id="create-status"></div>
+    <label>Tuner Mode</label>
+    <select id="create-tuner-mode">
+      <option value="deterministic">Deterministic</option>
+      <option value="ga">Seeded GA</option>
+    </select>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModals()">Cancel</button>
       <button class="btn btn-ai" id="create-submit" onclick="submitCreate()">Design</button>

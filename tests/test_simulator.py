@@ -37,7 +37,7 @@ class TestInjectRP:
         GE 0
         EX 0 1 11 0 1 0
         FR 0 1 0 0 14.15
-        RP 0 1 361 1000 90 0 0 1
+        RP 0 1 361 1000 89 0 0 1
         EN
     """).strip()
 
@@ -56,7 +56,7 @@ class TestInjectRP:
         GE 0
         EX 0 1 11 0 1 0
         FR 0 1 0 0 14.15
-        RP 0 1 361 1000 90 0 0 1
+        RP 0 1 361 1000 89 0 0 1
         RP 0 181 1 1000 -90 0 1 0
         EN
     """).strip()
@@ -107,7 +107,7 @@ class TestBuildSweepDeck:
         GE 0
         EX 0 1 11 0 1 0
         FR 0 1 0 0 14.15
-        RP 0 1 361 1000 90 0 0 1
+        RP 0 1 361 1000 89 0 0 1
         EN
     """).strip()
 

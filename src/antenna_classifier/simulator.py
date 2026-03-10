@@ -237,8 +237,9 @@ def simulate_currents(
 _RP_CARDS = {
     # Elevation cut at phi=0: theta -90..90 in 1° steps
     "elevation": "RP 0 181 1 1000 -90 0 1 0",
-    # Azimuth cut at theta near horizon: phi 0..360 in 1° steps
-    "azimuth": "RP 0 1 361 1000 90 0 0 1",
+    # Azimuth cut just above the horizon: phi 0..360 in 1° steps.
+    # Using exactly 90° produces invalid gains for some ground-coupled horizontal antennas.
+    "azimuth": "RP 0 1 361 1000 89 0 0 1",
     # Full 3D hemisphere: theta 0..90, phi 0..360 in 2° steps
     "full": "RP 0 46 181 1000 0 0 2 2",
 }
