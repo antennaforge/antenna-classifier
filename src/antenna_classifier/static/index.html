@@ -1187,12 +1187,6 @@ function renderTuningLab(isLoadingResults = false) {
 
               ${analysis ? `
                 <div class="lab-live-grid">
-                  ${directiveMetricCards.map(card => `
-                    <div class="lab-stat live${showPendingStyle ? ' pending' : ''}" data-lab-pending-style>
-                      <div class="label">${esc(card.label)}</div>
-                      <div class="value">${esc(card.value)}</div>
-                    </div>
-                  `).join('')}
                   ${telemetryCards.map(card => `
                     <div class="lab-stat live${showPendingStyle ? ' pending' : ''}" data-lab-pending-style>
                       <div class="label">${esc(card.label)}</div>
@@ -1218,6 +1212,7 @@ function renderTuningLab(isLoadingResults = false) {
                   <div class="lab-stat"><div class="label">SWR At Target</div><div class="value">${analysis.swr_at_target != null ? Number(analysis.swr_at_target).toFixed(2) : 'N/A'}</div></div>
                   <div class="lab-stat"><div class="label">Best Dip</div><div class="value">${analysis.resonant_freq_mhz != null ? Number(analysis.resonant_freq_mhz).toFixed(2) + ' MHz' : 'N/A'}</div></div>
                   <div class="lab-stat"><div class="label">Match Quality</div><div class="value" style="font-size:18px;">${esc(analysis.match_quality)}</div></div>
+                  ${directiveMetricCards.map(card => `<div class="lab-stat"><div class="label">${esc(card.label)}</div><div class="value">${esc(card.value)}</div></div>`).join('')}
                 </div>
                 <div class="plot-card">
                   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
