@@ -12,3 +12,4 @@ build/
 !.secrets/README.md
 .venv/
 pdfs/
+reports/classification_rerun_round1_20260309.json
