@@ -144,10 +144,12 @@ location /antenna/ {
     auth_request_set $hf_user_id    $upstream_http_x_hf_user_id;
     auth_request_set $hf_callsign   $upstream_http_x_hf_callsign;
     auth_request_set $hf_ai_enabled $upstream_http_x_hf_ai_enabled;
+  auth_request_set $hf_is_admin   $upstream_http_x_hf_is_admin;
 
     proxy_set_header X-HF-User-Id     $hf_user_id;
     proxy_set_header X-HF-Callsign    $hf_callsign;
     proxy_set_header X-HF-AI-Enabled  $hf_ai_enabled;
+  proxy_set_header X-HF-Is-Admin    $hf_is_admin;
 
     proxy_pass http://ac-dashboard:8501/;
     proxy_http_version 1.1;
