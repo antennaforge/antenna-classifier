@@ -128,7 +128,7 @@
     ];
 
     var NAV_ITEMS_PUBLIC = [
-        { label: 'Blog',  icon: '📝', href: '/blog' }
+        { label: 'Propagation Explorer', icon: '📡', href: '/' }
     ];
 
     function isActive(href, currentPath) {
